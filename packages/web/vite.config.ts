@@ -25,5 +25,18 @@ export default defineConfig({
     outDir: 'dist',
     sourcemap: true,
     chunkSizeWarningLimit: 1500,
+    rollupOptions: {
+      output: {
+        // Le socle React ne change qu'à une montée de version : le séparer permet au
+        // navigateur de le garder en cache d'une mise à jour du logiciel à l'autre.
+        manualChunks(identifiant) {
+          if (identifiant.includes('/node_modules/react') || identifiant.includes('/node_modules/scheduler')) {
+            return 'socle';
+          }
+          if (identifiant.includes('/node_modules/zod')) return 'validation';
+          return undefined;
+        },
+      },
+    },
   },
 });

@@ -72,6 +72,8 @@ function migrer(base: BaseDonnees): void {
       modifie_par         TEXT NOT NULL DEFAULT ''
     );
 
+    CREATE INDEX IF NOT EXISTS idx_dossiers_modifie ON dossiers(modifie_le DESC);
+
     CREATE TABLE IF NOT EXISTS versions_dossier (
       dossier_id  TEXT NOT NULL REFERENCES dossiers(id) ON DELETE CASCADE,
       version     INTEGER NOT NULL,

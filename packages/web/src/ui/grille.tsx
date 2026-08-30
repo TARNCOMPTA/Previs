@@ -1,5 +1,5 @@
 import { formaterMontant } from '@previs/core';
-import { useState, type ReactNode } from 'react';
+import { Fragment, useState, type ReactNode } from 'react';
 
 export interface Colonne<T> {
   cle: string;
@@ -99,8 +99,8 @@ export function GrilleLignes<T>({
               const id = cle(ligne);
               const ouvert = deplies.has(id);
               return (
-                <>
-                  <tr key={id} className={estProposee?.(ligne) ? 'ligne-llm' : undefined}>
+                <Fragment key={id}>
+                  <tr className={estProposee?.(ligne) ? 'ligne-llm' : undefined}>
                     {detail ? (
                       <td style={{ textAlign: 'center' }}>
                         <button
@@ -168,13 +168,13 @@ export function GrilleLignes<T>({
                   </tr>
 
                   {ouvert && detail ? (
-                    <tr key={`${id}-detail`}>
+                    <tr>
                       <td colSpan={nbColonnes} style={{ background: 'var(--surface-3)', padding: '12px 16px' }}>
                         {detail(ligne)}
                       </td>
                     </tr>
                   ) : null}
-                </>
+                </Fragment>
               );
             })}
           </tbody>

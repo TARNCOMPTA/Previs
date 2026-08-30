@@ -374,7 +374,12 @@ export function Graphique({
         {type === 'barres'
           ? libelles.map((_, i) => {
               const largeurGroupe = aireL / libelles.length;
-              const largeurBarre = Math.min(46, (largeurGroupe * 0.66) / series.length);
+              // Avec de nombreuses séries, la largeur calculée pouvait devenir
+              // négative et rendre le graphique invalide : elle est bornée.
+              const largeurBarre = Math.max(
+                1.5,
+                Math.min(46, (largeurGroupe * 0.72) / series.length),
+              );
               const centre = marge.gauche + largeurGroupe * (i + 0.5);
               return (
                 <g key={i} onMouseEnter={() => setSurvol(i)} onMouseLeave={() => setSurvol(null)}>
@@ -387,7 +392,7 @@ export function Graphique({
                         key={k}
                         x={centre - (largeurBarre * series.length) / 2 + k * largeurBarre}
                         y={haut}
-                        width={largeurBarre - 3}
+                        width={Math.max(1, largeurBarre - 1.5)}
                         height={Math.max(1, bas - haut)}
                         fill={s.couleur ?? couleurs[k % couleurs.length]}
                         opacity={survol === null || survol === i ? 1 : 0.45}

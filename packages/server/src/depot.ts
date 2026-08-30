@@ -25,10 +25,23 @@ import { nouvelIdentifiant } from './securite.js';
 /** Nombre de versions conservées par dossier. Au-delà, les plus anciennes sont purgées. */
 const VERSIONS_CONSERVEES = 100;
 
-interface LigneDossier {
+/**
+ * Durée pendant laquelle deux écritures identiques du même auteur sont regroupées.
+ *
+ * L'interface enregistre huit cents millisecondes après la dernière frappe : sans ce
+ * regroupement, une demi-heure de saisie produirait des centaines de versions, toutes
+ * intitulées « Saisie », et l'historique deviendrait inexploitable.
+ */
+const FENETRE_REGROUPEMENT_MS = 10 * 60 * 1000;
+
+/** Colonnes de la fiche résumé, sans le contenu du dossier. */
+const COLONNES_RESUME =
+  'id, nom, version, client, regime, type_dossier, nb_exercices, annee_debut, ' +
+  'ca_premier_exercice, coherent, cree_le, modifie_le, modifie_par';
+
+interface LigneResume {
   id: string;
   nom: string;
-  contenu: string;
   version: number;
   client: string;
   regime: string;
@@ -42,7 +55,11 @@ interface LigneDossier {
   modifie_par: string;
 }
 
-function versResume(ligne: LigneDossier): ResumeDossier {
+interface LigneDossier extends LigneResume {
+  contenu: string;
+}
+
+function versResume(ligne: LigneResume): ResumeDossier {
   return {
     id: ligne.id,
     nom: ligne.nom,
@@ -60,8 +77,15 @@ function versResume(ligne: LigneDossier): ResumeDossier {
   };
 }
 
+/**
+ * Reconstitue un dossier depuis la base.
+ *
+ * C'est la frontière de lecture : le contenu est validé une fois ici, ce qui protège
+ * des dossiers écrits par une version antérieure du modèle, et dispense le moteur de
+ * revalider à chaque calcul.
+ */
 function versEnregistre(ligne: LigneDossier): DossierEnregistre {
-  return { ...versResume(ligne), dossier: JSON.parse(ligne.contenu) as Dossier };
+  return { ...versResume(ligne), dossier: normaliserDossier(JSON.parse(ligne.contenu)) };
 }
 
 /**
@@ -99,9 +123,11 @@ export class DepotSqlite implements DepotDossiers {
   constructor(private readonly base: BaseDonnees) {}
 
   async lister(): Promise<ResumeDossier[]> {
+    // Le contenu des dossiers n'est pas lu : sur un cabinet de deux cents dossiers,
+    // la liste d'accueil chargeait sinon plusieurs mégaoctets de JSON pour rien.
     const lignes = this.base
-      .prepare('SELECT * FROM dossiers ORDER BY modifie_le DESC')
-      .all() as LigneDossier[];
+      .prepare(`SELECT ${COLONNES_RESUME} FROM dossiers ORDER BY modifie_le DESC`)
+      .all() as LigneResume[];
     return lignes.map(versResume);
   }
 
@@ -325,6 +351,15 @@ export class DepotSqlite implements DepotDossiers {
     return versEnregistre(this.lireOuEchouer(ligne.id));
   }
 
+  /**
+   * Archive l'état du dossier.
+   *
+   * Une suite d'enregistrements identiques du même auteur, rapprochés dans le temps,
+   * ne laisse qu'une seule entrée — la dernière. L'historique reflète ainsi des
+   * séances de travail plutôt que des frappes au clavier, et cesse de croître sans
+   * borne pendant une saisie. Une écriture portant un autre commentaire, une
+   * restauration ou une intervention de l'assistant ouvrent toujours une entrée neuve.
+   */
   private enregistrerVersion(
     id: string,
     version: number,
@@ -332,6 +367,30 @@ export class DepotSqlite implements DepotDossiers {
     auteur: Auteur,
     commentaire: string,
   ): void {
+    const maintenant = new Date();
+
+    const derniere = this.base
+      .prepare(
+        `SELECT version, auteur, commentaire, origine, cree_le FROM versions_dossier
+         WHERE dossier_id = ? ORDER BY version DESC LIMIT 1`,
+      )
+      .get(id) as
+      | { version: number; auteur: string; commentaire: string; origine: string; cree_le: string }
+      | undefined;
+
+    const regroupable =
+      derniere !== undefined &&
+      derniere.auteur === auteur.nom &&
+      derniere.origine === auteur.origine &&
+      derniere.commentaire === commentaire &&
+      maintenant.getTime() - Date.parse(derniere.cree_le) < FENETRE_REGROUPEMENT_MS;
+
+    if (regroupable) {
+      this.base
+        .prepare('DELETE FROM versions_dossier WHERE dossier_id = ? AND version = ?')
+        .run(id, derniere.version);
+    }
+
     this.base
       .prepare(
         `INSERT OR REPLACE INTO versions_dossier
@@ -345,7 +404,7 @@ export class DepotSqlite implements DepotDossiers {
         auteur.nom,
         commentaire,
         auteur.origine,
-        new Date().toISOString(),
+        maintenant.toISOString(),
       );
 
     this.base

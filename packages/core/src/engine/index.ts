@@ -1,4 +1,4 @@
-import { normaliserDossier, type Anomalie, type Dossier } from '../model/dossier.js';
+import { ajusterSeries, type Anomalie, type Dossier } from '../model/dossier.js';
 import { estSocieteIS } from '../model/identite.js';
 import { construireControles, detecterAnomalies } from './controles.js';
 import {
@@ -131,13 +131,17 @@ function calculerDistributions(dossier: Dossier, exercices: ReturnType<typeof co
  * La fonction est pure et déterministe : à dossier identique, chiffres identiques dans
  * l'interface, sur le serveur et dans le PDF. Elle ne lève jamais sur un dossier
  * incomplet — un dossier vide produit des états à zéro et des anomalies de saisie.
+ * Elle ne modifie jamais le dossier reçu.
  *
  * L'équilibre du bilan n'est pas obtenu par ajustement : chaque compte de tiers vaut
  * « cumul engagé − cumul réglé » des mêmes séries qui alimentent la trésorerie, si bien
  * qu'aucun montant ne peut figurer d'un seul côté du bilan.
  */
 export function calculer(dossierEntree: Dossier): Resultats {
-  const dossier = normaliserDossier(dossierEntree);
+  // Le dossier est déjà typé : seul l'ajustement des séries est nécessaire. La
+  // validation zod, qui coûtait la moitié d'un recalcul, est faite aux frontières —
+  // lecture en base, requête HTTP, écriture du serveur MCP — et non à chaque frappe.
+  const dossier = ajusterSeries(dossierEntree);
   const p = dossier.parametres;
   const exercices = construireExercices(p);
   const horizon = nbMoisTotal(exercices);

@@ -1,6 +1,8 @@
+import compression from '@fastify/compress';
 import cookie from '@fastify/cookie';
 import statique from '@fastify/static';
 import { existsSync } from 'node:fs';
+import { sep } from 'node:path';
 import Fastify from 'fastify';
 import { ServiceAuthentification } from './auth.js';
 import { journaliser, ouvrirBase, purgerSessions, type BaseDonnees } from './base.js';
@@ -29,6 +31,9 @@ export async function construireApplication(config: Configuration): Promise<Appl
     trustProxy: true,
   });
 
+  // Un dossier volumineux pèse une cinquantaine de kilo-octets et ses états calculés
+  // le double : la compression divise ces échanges par dix sur une liaison lente.
+  await app.register(compression, { global: true, threshold: 1024, encodings: ['br', 'gzip', 'deflate'] });
   await app.register(cookie, { secret: config.secretSession });
   enregistrerRoutes(app, { base, auth, depot, config });
 
@@ -36,7 +41,21 @@ export async function construireApplication(config: Configuration): Promise<Appl
 
   // ─── Interface construite ───────────────────────────────────────────────────
   if (existsSync(config.cheminStatique)) {
-    await app.register(statique, { root: config.cheminStatique, prefix: '/' });
+    // Vite appose une empreinte au nom des fichiers de /assets : ils peuvent être
+    // mis en cache indéfiniment. index.html, lui, ne doit jamais l'être.
+    await app.register(statique, {
+      root: config.cheminStatique,
+      prefix: '/',
+      // L'en-tête par défaut du greffon est neutralisé pour être posé ici seul.
+      cacheControl: false,
+      setHeaders(reponse, chemin) {
+        const durable = chemin.includes(`${sep}assets${sep}`) && !chemin.endsWith('.html');
+        reponse.setHeader(
+          'cache-control',
+          durable ? 'public, max-age=31536000, immutable' : 'no-cache',
+        );
+      },
+    });
     // Toute route inconnue hors API renvoie l'interface : le routage est côté client.
     app.setNotFoundHandler((requete, reponse) => {
       if (requete.url.startsWith('/api') || requete.url.startsWith('/mcp')) {

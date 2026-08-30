@@ -1,5 +1,7 @@
 import {
+  ajusterSeries,
   calculer,
+  completerLigne,
   normaliserDossier,
   nouvelId,
   type CheminListe,
@@ -49,11 +51,36 @@ interface EtatDossier {
 let minuterieEnregistrement: ReturnType<typeof setTimeout> | null = null;
 let minuterieSynchro: ReturnType<typeof setInterval> | null = null;
 
+type Ligne = Record<string, unknown>;
+
 /** Accède à une liste de lignes du dossier par son chemin. */
-function listeDe(dossier: Dossier, chemin: CheminListe): Array<Record<string, unknown>> {
+function listeDe(dossier: Dossier, chemin: CheminListe): Ligne[] {
   const [section, propriete] = chemin.split('.') as [keyof Dossier, string];
   const conteneur = dossier[section] as unknown as Record<string, unknown>;
-  return conteneur[propriete] as Array<Record<string, unknown>>;
+  return conteneur[propriete] as Ligne[];
+}
+
+/**
+ * Remplace une liste de lignes en ne recréant que le chemin touché.
+ *
+ * Partage structurel : les lignes non modifiées gardent leur identité, ce qui permet
+ * aux composants de grille mémoïsés de ne pas se redessiner et évite de recopier
+ * l'intégralité du dossier à chaque frappe.
+ */
+function avecListe(
+  dossier: Dossier,
+  chemin: CheminListe,
+  transformation: (lignes: Ligne[]) => Ligne[],
+): Dossier {
+  const [section, propriete] = chemin.split('.') as [keyof Dossier, string];
+  const conteneur = dossier[section] as unknown as Record<string, unknown>;
+  const lignes = conteneur[propriete] as Ligne[];
+  const suivantes = transformation(lignes);
+  if (suivantes === lignes) return dossier;
+  return {
+    ...dossier,
+    [section]: { ...conteneur, [propriete]: suivantes },
+  } as Dossier;
 }
 
 /**
@@ -78,21 +105,29 @@ export const useDossier = create<EtatDossier>((set, get) => {
     minuterieEnregistrement = setTimeout(() => void get().enregistrer(), DELAI_ENREGISTREMENT);
   }
 
-  /** Applique une transformation au dossier, recalcule et programme l'enregistrement. */
-  function appliquer(
-    transformation: (dossier: Dossier) => void,
+  /**
+   * Remplace le dossier par une version transformée, recalcule et programme
+   * l'enregistrement.
+   *
+   * `ajusterSeries` remplace ici la validation zod complète : le dossier vient d'une
+   * saisie typée, il n'y a rien à valider, seulement des tableaux « par exercice » à
+   * compléter si le nombre d'exercices a changé. La validation reste faite aux
+   * frontières — chargement depuis le serveur et écriture par le serveur MCP.
+   */
+  function transformer(
+    transformation: (dossier: Dossier) => Dossier,
     options: { sansHistorique?: boolean } = {},
   ): void {
     const courant = get().dossier;
     if (!courant) return;
 
-    const copie = structuredClone(courant) as Dossier;
-    transformation(copie);
-    const normalise = normaliserDossier(copie);
-    const { resultats, erreur } = recalculer(normalise);
+    const suivant = ajusterSeries(transformation(courant));
+    if (suivant === courant) return;
+
+    const { resultats, erreur } = recalculer(suivant);
 
     set((etat) => ({
-      dossier: normalise,
+      dossier: suivant,
       resultats: resultats ?? etat.resultats,
       erreurCalcul: erreur,
       etat: 'modifie',
@@ -103,6 +138,23 @@ export const useDossier = create<EtatDossier>((set, get) => {
     }));
 
     programmerEnregistrement();
+  }
+
+  /**
+   * Variante mutante, pour les écrans de paramètres et d'identité.
+   *
+   * Elle recopie le dossier : sans grille de plusieurs dizaines de lignes à redessiner,
+   * le coût est sans conséquence et l'écriture des écrans reste directe.
+   */
+  function appliquer(
+    transformation: (dossier: Dossier) => void,
+    options: { sansHistorique?: boolean } = {},
+  ): void {
+    transformer((courant) => {
+      const copie = structuredClone(courant) as Dossier;
+      transformation(copie);
+      return copie;
+    }, options);
   }
 
   return {
@@ -120,7 +172,9 @@ export const useDossier = create<EtatDossier>((set, get) => {
     async ouvrir(id) {
       set({ chargement: true, messageErreur: null, misAJourAilleurs: false });
       try {
-        const fiche = await api.lireDossier(id);
+        const brut = await api.lireDossier(id);
+        // Seule frontière côté interface : le dossier vient du réseau, il est validé.
+        const fiche = { ...brut, dossier: normaliserDossier(brut.dossier) };
         const { resultats, erreur } = recalculer(fiche.dossier);
         set({
           fiche,
@@ -141,8 +195,9 @@ export const useDossier = create<EtatDossier>((set, get) => {
           if (!etat.fiche || etat.etat !== 'a_jour') return;
           void api
             .lireDossier(etat.fiche.id)
-            .then((frais) => {
-              if (frais.version === etat.fiche?.version) return;
+            .then((brut) => {
+              if (brut.version === etat.fiche?.version) return;
+              const frais = { ...brut, dossier: normaliserDossier(brut.dossier) };
               const calculs = recalculer(frais.dossier);
               set({
                 fiche: frais,
@@ -185,49 +240,61 @@ export const useDossier = create<EtatDossier>((set, get) => {
     modifier: appliquer,
 
     ajouterLigne(liste, ligne) {
-      const id = typeof ligne.id === 'string' && ligne.id ? ligne.id : nouvelId(liste.split('.')[1].slice(0, 3));
-      appliquer((dossier) => {
-        listeDe(dossier, liste).push({ ...ligne, id, origine: 'manuel', actif: true });
-      });
+      const id =
+        typeof ligne.id === 'string' && ligne.id ? ligne.id : nouvelId(liste.split('.')[1].slice(0, 3));
+      // La ligne fournie par l'écran est partielle : son schéma la complète, puisque
+      // le moteur ne valide plus à chaque calcul.
+      const complete = completerLigne(liste, { ...ligne, id, origine: 'manuel', actif: true });
+      transformer((dossier) => avecListe(dossier, liste, (lignes) => [...lignes, complete]));
       return id;
     },
 
     dupliquerLigne(liste, id) {
-      appliquer((dossier) => {
-        const lignes = listeDe(dossier, liste);
-        const source = lignes.find((l) => l.id === id);
-        if (!source) return;
-        const copie = structuredClone(source);
-        copie.id = nouvelId(liste.split('.')[1].slice(0, 3));
-        copie.libelle = `${String(source.libelle ?? '')} (copie)`;
-        copie.origine = 'manuel';
-        lignes.splice(lignes.indexOf(source) + 1, 0, copie);
-      });
+      transformer((dossier) =>
+        avecListe(dossier, liste, (lignes) => {
+          const i = lignes.findIndex((l) => l.id === id);
+          if (i < 0) return lignes;
+          const copie = structuredClone(lignes[i]);
+          copie.id = nouvelId(liste.split('.')[1].slice(0, 3));
+          copie.libelle = `${String(lignes[i].libelle ?? '')} (copie)`;
+          copie.origine = 'manuel';
+          return [...lignes.slice(0, i + 1), copie, ...lignes.slice(i + 1)];
+        }),
+      );
     },
 
     modifierLigne(liste, id, champs) {
-      appliquer((dossier) => {
-        const ligne = listeDe(dossier, liste).find((l) => l.id === id);
-        if (ligne) Object.assign(ligne, champs);
-      });
+      transformer((dossier) =>
+        avecListe(dossier, liste, (lignes) => {
+          const i = lignes.findIndex((l) => l.id === id);
+          if (i < 0) return lignes;
+          const suivantes = [...lignes];
+          suivantes[i] = { ...lignes[i], ...champs };
+          return suivantes;
+        }),
+      );
     },
 
     supprimerLigne(liste, id) {
-      appliquer((dossier) => {
-        const lignes = listeDe(dossier, liste);
-        const i = lignes.findIndex((l) => l.id === id);
-        if (i >= 0) lignes.splice(i, 1);
-      });
+      transformer((dossier) =>
+        avecListe(dossier, liste, (lignes) => {
+          const i = lignes.findIndex((l) => l.id === id);
+          return i < 0 ? lignes : [...lignes.slice(0, i), ...lignes.slice(i + 1)];
+        }),
+      );
     },
 
     deplacerLigne(liste, id, sens) {
-      appliquer((dossier) => {
-        const lignes = listeDe(dossier, liste);
-        const i = lignes.findIndex((l) => l.id === id);
-        const cible = i + sens;
-        if (i < 0 || cible < 0 || cible >= lignes.length) return;
-        [lignes[i], lignes[cible]] = [lignes[cible], lignes[i]];
-      });
+      transformer((dossier) =>
+        avecListe(dossier, liste, (lignes) => {
+          const i = lignes.findIndex((l) => l.id === id);
+          const cible = i + sens;
+          if (i < 0 || cible < 0 || cible >= lignes.length) return lignes;
+          const suivantes = [...lignes];
+          [suivantes[i], suivantes[cible]] = [suivantes[cible], suivantes[i]];
+          return suivantes;
+        }),
+      );
     },
 
     annuler() {

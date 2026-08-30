@@ -1,5 +1,10 @@
 import { z } from 'zod';
 import { zDossier, type Dossier } from '../model/dossier.js';
+import { zLigneCharge, zLignePersonnel } from '../model/charges.js';
+import { zApport, zCreditBail, zEmprunt, zSubvention } from '../model/financements.js';
+import { zCession, zLigneInvestissement } from '../model/investissements.js';
+import { zLigneRecette } from '../model/recettes.js';
+import { zLigneDistribution, zLigneExceptionnelle, zLignePassifDeclare } from '../model/autres.js';
 
 /** Rôles applicatifs. Un `admin` gère les comptes et les jetons d'API. */
 export const zRole = z.enum(['admin', 'collaborateur', 'lecteur']);
@@ -190,3 +195,30 @@ export const ENTETE_JETON = 'x-previs-token';
 
 /** Préfixe des jetons d'API, pour les repérer facilement. */
 export const PREFIXE_JETON = 'previs_';
+
+/**
+ * Schéma zod de chaque liste de lignes.
+ *
+ * Sert à compléter les valeurs par défaut d'une ligne créée depuis l'interface : le
+ * moteur ne valide plus à chaque calcul, c'est donc à la création que la ligne doit
+ * être rendue complète.
+ */
+export const SCHEMAS_LIGNE = {
+  'investissements.lignes': zLigneInvestissement,
+  'investissements.cessions': zCession,
+  'financements.apports': zApport,
+  'financements.emprunts': zEmprunt,
+  'financements.subventions': zSubvention,
+  'financements.creditsBaux': zCreditBail,
+  'charges.lignes': zLigneCharge,
+  'charges.personnel': zLignePersonnel,
+  'recettes.lignes': zLigneRecette,
+  'autres.exceptionnels': zLigneExceptionnelle,
+  'autres.distributions': zLigneDistribution,
+  'autres.passifDeclare': zLignePassifDeclare,
+} as const satisfies Record<CheminListe, z.ZodTypeAny>;
+
+/** Complète une ligne partielle avec toutes les valeurs par défaut de son schéma. */
+export function completerLigne(liste: CheminListe, ligne: Record<string, unknown>): Record<string, unknown> {
+  return SCHEMAS_LIGNE[liste].parse(ligne) as Record<string, unknown>;
+}

@@ -55,6 +55,28 @@ Toute nouvelle charge, tout nouveau produit doit donc :
 Un poste ajouté au compte de résultat sans contrepartie déséquilibre le bilan de
 son montant exact. Les tests le détectent immédiatement.
 
+### Le second point délicat : le chemin de la saisie
+
+`calculer()` tourne à **chaque frappe** dans l'interface. Trois invariants tiennent
+cette performance ; les défaire coûterait immédiatement un facteur deux :
+
+1. **Le moteur ne valide pas.** `calculer()` appelle `ajusterSeries()`, pas
+   `normaliserDossier()`. La validation zod représentait la moitié du coût d'un
+   recalcul. Elle est faite aux frontières, et à elles seules : lecture en base
+   (`depot.ts`), requêtes HTTP (schémas du contrat), chargement dans l'interface,
+   écritures du serveur MCP (`appliquerOperations`).
+2. **`ajusterSeries()` préserve les identités.** Un objet dont rien ne change est
+   renvoyé tel quel. Le magasin de l'interface s'appuie dessus pour ne recopier que
+   le chemin modifié — partage structurel — au lieu du dossier entier.
+3. **Une ligne créée doit être complète.** Puisque le moteur ne remplit plus les
+   valeurs par défaut, toute ligne nouvelle passe par `completerLigne()`, qui
+   applique le schéma zod de sa liste.
+
+`packages/core/test/performance.test.ts` verrouille ces trois points, ainsi qu'un
+plafond de cinq millisecondes par calcul sur un dossier de deux cents lignes.
+Ne jamais remettre de validation dans `calculer()` : ajouter plutôt la frontière
+manquante.
+
 ## Conventions
 
 - **Français partout** : libellés, messages, commentaires, noms de variables et
@@ -80,6 +102,10 @@ complet, pour chacun des trois régimes.
 Pour une modification de l'interface, la lancer réellement : `npm run dev`, puis
 parcourir les écrans touchés. Un typecheck qui passe ne prouve pas qu'un écran
 s'affiche.
+
+Pour une modification du chemin de saisie, mesurer : ouvrir un dossier d'une
+soixantaine de lignes et chronométrer la tâche synchrone déclenchée par une frappe.
+Elle doit rester sous six millisecondes.
 
 ## Sécurité
 

@@ -263,11 +263,7 @@ export default function Recettes() {
                   <h2>Répartition par activité</h2>
                 </header>
                 <div className="corps">
-                  <Graphique
-                    type="barres"
-                    libelles={annees}
-                    series={resultats.recettes.detail.map((d) => ({ nom: d.libelle, valeurs: d.montants }))}
-                  />
+                  <Graphique type="barres" libelles={annees} series={seriesParActivite(resultats)} />
                 </div>
               </section>
             ) : null}
@@ -276,4 +272,32 @@ export default function Recettes() {
       }}
     />
   );
+}
+
+/** Nombre d'activités détaillées dans le graphique ; au-delà, elles sont regroupées. */
+const ACTIVITES_DETAILLEES = 8;
+
+/**
+ * Séries du graphique de répartition.
+ *
+ * Un dossier peut compter des dizaines d'activités : au-delà de huit, les barres
+ * deviendraient illisibles. Les plus importantes sont détaillées, les autres cumulées.
+ */
+function seriesParActivite(resultats: {
+  recettes: { detail: Array<{ libelle: string; montants: number[] }> };
+}): Array<{ nom: string; valeurs: number[] }> {
+  const detail = [...resultats.recettes.detail].sort(
+    (a, b) => b.montants.reduce((t, v) => t + v, 0) - a.montants.reduce((t, v) => t + v, 0),
+  );
+  if (detail.length <= ACTIVITES_DETAILLEES) {
+    return detail.map((d) => ({ nom: d.libelle, valeurs: d.montants }));
+  }
+
+  const principales = detail.slice(0, ACTIVITES_DETAILLEES);
+  const reste = detail.slice(ACTIVITES_DETAILLEES);
+  const cumul = reste[0].montants.map((_, i) => reste.reduce((t, d) => t + (d.montants[i] ?? 0), 0));
+  return [
+    ...principales.map((d) => ({ nom: d.libelle, valeurs: d.montants })),
+    { nom: `${reste.length} autres activités`, valeurs: cumul },
+  ];
 }
