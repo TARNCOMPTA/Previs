@@ -321,3 +321,51 @@ describe('cohérence des états entre eux', () => {
     expect(vide.anomalies.some((a) => a.code === 'identite_incomplete')).toBe(true);
   });
 });
+
+describe('bilan d’ouverture', () => {
+  it('sans bilan d’ouverture, la trésorerie initiale trouve sa contrepartie au passif', () => {
+    const r = calculer(dossier({ parametres: { tresorerieInitiale: 25000 } }));
+    expect(r.controles.filter((c) => c.code === 'bilan_ouverture')).toHaveLength(0);
+    expect(r.bilans[0].actif.disponibilites).toBe(25000);
+    expect(Math.abs(r.bilans[0].ecart)).toBeLessThanOrEqual(TOLERANCE);
+    expect(r.coherent).toBe(true);
+  });
+
+  it('reprend un bilan d’ouverture équilibré sans créer d’écart', () => {
+    const r = calculer(
+      dossier({
+        parametres: { tresorerieInitiale: 8000 },
+        autres: {
+          bilanOuverture: {
+            actif: true,
+            immobilisationsBrutes: 40000,
+            amortissementsCumules: 15000,
+            stocks: 6000,
+            creancesClients: 12000,
+            capitalSocial: 10000,
+            reportANouveau: 11000,
+            empruntsRestantDus: 20000,
+            dettesFournisseurs: 8000,
+            dettesFiscalesSociales: 2000,
+          },
+        },
+      }),
+    );
+    expect(r.controles.filter((c) => c.code === 'bilan_ouverture' && !c.ok)).toHaveLength(0);
+    expect(Math.abs(r.bilans[0].ecart)).toBeLessThanOrEqual(TOLERANCE);
+  });
+
+  it('signale un bilan d’ouverture déséquilibré sans jamais le corriger d’office', () => {
+    const r = calculer(
+      dossier({
+        autres: { bilanOuverture: { actif: true, stocks: 10000, capitalSocial: 4000 } },
+      }),
+    );
+    const controle = r.controles.find((c) => c.code === 'bilan_ouverture');
+    expect(controle?.ok).toBe(false);
+    expect(controle?.ecart).toBe(6000);
+    expect(r.coherent).toBe(false);
+    // L'écart se propage au bilan : il n'est jamais absorbé par un compte d'attente.
+    expect(Math.abs(r.bilans[0].ecart)).toBeGreaterThan(TOLERANCE);
+  });
+});

@@ -426,15 +426,18 @@ export function calculer(dossierEntree: Dossier): Resultats {
   // ─── Bilan d'ouverture ──────────────────────────────────────────────────────
   const ouverture = dossier.autres.bilanOuverture;
   const ouvertureActive = ouverture.actif;
-  const actifOuverture = ouvertureActive
-    ? euro(
-        ouverture.immobilisationsBrutes -
-          ouverture.amortissementsCumules +
-          ouverture.stocks +
-          ouverture.creancesClients +
-          ouverture.autresCreances,
-      )
-    : 0;
+  const actifOuverture = euro(
+    (ouvertureActive
+      ? ouverture.immobilisationsBrutes -
+        ouverture.amortissementsCumules +
+        ouverture.stocks +
+        ouverture.creancesClients +
+        ouverture.autresCreances
+      : 0) + p.tresorerieInitiale,
+  );
+  // Sans bilan d'ouverture saisi, la trésorerie initiale est un apport de l'exploitant
+  // porté en report à nouveau : elle trouve ainsi sa contrepartie au passif, et le
+  // bilan d'ouverture est équilibré par construction.
   const passifOuverture = ouvertureActive
     ? euro(
         ouverture.capitalSocial +
@@ -445,13 +448,9 @@ export function calculer(dossierEntree: Dossier): Resultats {
           ouverture.dettesFournisseurs +
           ouverture.dettesFiscalesSociales,
       )
-    : 0;
-  // Sans bilan d'ouverture saisi, la trésorerie initiale est un apport de l'exploitant
-  // porté en report à nouveau : elle trouve ainsi sa contrepartie au passif.
-  const reportOuverture = ouvertureActive
-    ? ouverture.reportANouveau
     : euro(p.tresorerieInitiale);
-  const ecartOuverture = euro(actifOuverture + p.tresorerieInitiale - passifOuverture);
+  const reportOuverture = ouvertureActive ? ouverture.reportANouveau : euro(p.tresorerieInitiale);
+  const ecartOuverture = euro(actifOuverture - passifOuverture);
 
   // ─── Besoin en fonds de roulement ───────────────────────────────────────────
   const bfr: Bfr[] = [];
