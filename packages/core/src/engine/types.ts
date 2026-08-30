@@ -378,3 +378,8 @@ export interface Resultats {
   /** Faux si au moins un contrôle de gravité « erreur » a échoué. */
   coherent: boolean;
 }
+
+/** Vue réduite des déclarations de TVA, suffisante pour les contrôles de cohérence. */
+export interface ResultatTvaControle {
+  periodes: readonly PeriodeTva[];
+}
