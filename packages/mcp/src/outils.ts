@@ -27,7 +27,13 @@ function erreur(message: string): Reponse {
 function messageErreur(e: unknown): string {
   if (e instanceof ErreurDepot) {
     if (e.code === 'conflit_version') {
-      return `${e.message}\nRelire le dossier avec lire_dossier, puis rejouer la modification sur la version à jour.`;
+      return (
+        `${e.message}\n` +
+        'Le dossier a changé depuis votre lecture — probablement une saisie au clavier. ' +
+        'Relire avec lire_dossier, vérifier que la modification reste pertinente sur les ' +
+        'valeurs à jour, puis réécrire en transmettant la nouvelle versionAttendue. ' +
+        'Ne jamais renvoyer un tableau de montants recopié depuis la lecture précédente.'
+      );
     }
     return e.message;
   }
@@ -35,12 +41,44 @@ function messageErreur(e: unknown): string {
 }
 
 /**
+ * Refuse une écriture non versionnée qui suivrait immédiatement une saisie au clavier.
+ *
+ * C'est le seul moment où le modèle risque d'écraser un chiffre que l'expert-comptable
+ * vient de saisir sans l'avoir lu. Le refus est ponctuel : après relecture, le modèle
+ * dispose de la version à jour et son écriture suivante passe.
+ */
+async function refuserSiSaisieRecente(
+  depot: DepotDossiers,
+  dossierId: string,
+): Promise<Reponse | null> {
+  const versions = await depot.versions(dossierId);
+  const derniere = versions[0];
+  if (!derniere || derniere.origine !== 'interface') return null;
+  return erreur(
+    `Le dossier a été modifié au clavier (version ${derniere.version}, ${derniere.auteur}) depuis votre ` +
+      'dernière lecture. Écriture refusée pour ne pas écraser cette saisie.\n' +
+      'Relire le dossier avec lire_dossier, puis réécrire en transmettant versionAttendue = ' +
+      `${derniere.version}.`,
+  );
+}
+
+/**
  * Écrit dans un dossier et rend compte au modèle.
  *
  * Chaque écriture renvoie le journal des modifications et l'état des contrôles de
  * cohérence : le modèle voit immédiatement s'il vient de déséquilibrer le bilan.
- * Un conflit de version est rejoué une fois sur la version à jour, puisque les
- * opérations sont ciblées et n'écrasent pas les saisies faites au clavier entre-temps.
+ *
+ * Deux garde-fous protègent la saisie faite au clavier :
+ *
+ * 1. `versionAttendue`, relevée par `lire_dossier`, est transmise au dépôt : une
+ *    écriture fondée sur une lecture périmée est refusée, jamais rejouée en force.
+ * 2. Faute de `versionAttendue`, l'écriture est refusée une fois si la dernière
+ *    version vient de l'interface. Le modèle doit relire avant d'écrire par-dessus.
+ *
+ * Sans eux, une modification portant un champ de type tableau — `montants`,
+ * `effectifs`, `brutMensuel` — recopié depuis une lecture antérieure effaçait la
+ * saisie de l'expert-comptable sans qu'aucun contrôle ne le signale : le dossier
+ * restait équilibré, avec un chiffre remplacé par un autre.
  */
 async function ecrire(
   depot: DepotDossiers,
@@ -48,15 +86,19 @@ async function ecrire(
   dossierId: string,
   operations: Operation[],
   commentaire: string,
+  versionAttendue?: number,
 ): Promise<Reponse> {
   try {
-    let resultat;
-    try {
-      resultat = await depot.appliquer(dossierId, { operations, commentaire }, auteur);
-    } catch (e) {
-      if (!(e instanceof ErreurDepot) || e.code !== 'conflit_version') throw e;
-      resultat = await depot.appliquer(dossierId, { operations, commentaire }, auteur);
+    if (versionAttendue === undefined) {
+      const refus = await refuserSiSaisieRecente(depot, dossierId);
+      if (refus) return refus;
     }
+
+    const resultat = await depot.appliquer(
+      dossierId,
+      { operations, commentaire, versionAttendue },
+      auteur,
+    );
 
     const calculs = calculer(resultat.dossier.dossier);
     return texte(
@@ -118,6 +160,23 @@ function decrire(enregistre: DossierEnregistre): string {
 }
 
 const zDossierId = z.string().min(1).describe('Identifiant du dossier, obtenu par lister_dossiers.');
+
+/**
+ * Version sur laquelle porte l'écriture, relevée par `lire_dossier`.
+ *
+ * La transmettre est la seule façon pour le serveur de distinguer une modification
+ * réfléchie d'une écriture fondée sur une lecture périmée, qui effacerait une saisie
+ * faite au clavier entre-temps.
+ */
+const zVersionAttendue = z
+  .number()
+  .int()
+  .min(1)
+  .optional()
+  .describe(
+    'Numéro de version lu par lire_dossier. À transmettre systématiquement : le serveur refuse ' +
+      'alors l’écriture si le dossier a changé entre-temps, plutôt que d’écraser une saisie au clavier.',
+  );
 
 /** Enregistre les quinze outils du serveur MCP. */
 export function enregistrerOutils(serveur: McpServer, depot: DepotDossiers, auteur: Auteur): void {
@@ -200,6 +259,7 @@ export function enregistrerOutils(serveur: McpServer, depot: DepotDossiers, aute
         'Renseigne l’identité du client et le texte d’introduction du rapport. Seuls les champs fournis sont modifiés.',
       inputSchema: {
         dossierId: zDossierId,
+        versionAttendue: zVersionAttendue,
         raisonSociale: z.string().max(200).optional(),
         formeJuridique: z.string().max(80).optional().describe('SAS, SARL, EURL, entreprise individuelle…'),
         regime: z
@@ -234,12 +294,12 @@ export function enregistrerOutils(serveur: McpServer, depot: DepotDossiers, aute
           .describe('Rappel de la procédure, pour un plan de continuation uniquement.'),
       },
     },
-    async ({ dossierId, ...champs }) => {
+    async ({ dossierId, versionAttendue, ...champs }) => {
       const operations: Operation[] = Object.entries(champs)
         .filter(([, valeur]) => valeur !== undefined)
         .map(([cle, valeur]) => ({ action: 'definir', chemin: `identite.${cle}`, valeur }));
       if (operations.length === 0) return erreur('Aucun champ d’identité n’a été fourni.');
-      return ecrire(depot, auteur, dossierId, operations, 'Identité du dossier');
+      return ecrire(depot, auteur, dossierId, operations, 'Identité du dossier', versionAttendue);
     },
   );
 
@@ -251,6 +311,7 @@ export function enregistrerOutils(serveur: McpServer, depot: DepotDossiers, aute
         'Renseigne les hypothèses du dossier : période, TVA, impôt sur les sociétés, cotisations, délais de règlement. Seuls les champs fournis sont modifiés. Les montants sont en euros, les taux en pourcentage (20 pour 20 %), les index d’exercice commencent à 0.',
       inputSchema: {
         dossierId: zDossierId,
+        versionAttendue: zVersionAttendue,
         dateDebut: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe('Premier jour du premier exercice, AAAA-MM-JJ.'),
         nbExercices: z.number().int().min(1).max(10).optional(),
         dureePremierExerciceMois: z.number().int().min(1).max(24).optional(),
@@ -271,7 +332,7 @@ export function enregistrerOutils(serveur: McpServer, depot: DepotDossiers, aute
         eligibleTauxReduitIS: z.boolean().optional(),
       },
     },
-    async ({ dossierId, ...champs }) => {
+    async ({ dossierId, versionAttendue, ...champs }) => {
       const chemins: Record<string, string> = {
         dateDebut: 'parametres.dateDebut',
         nbExercices: 'parametres.nbExercices',
@@ -296,7 +357,7 @@ export function enregistrerOutils(serveur: McpServer, depot: DepotDossiers, aute
         .filter(([, valeur]) => valeur !== undefined)
         .map(([cle, valeur]) => ({ action: 'definir', chemin: chemins[cle], valeur }));
       if (operations.length === 0) return erreur('Aucun paramètre n’a été fourni.');
-      return ecrire(depot, auteur, dossierId, operations, 'Paramètres du dossier');
+      return ecrire(depot, auteur, dossierId, operations, 'Paramètres du dossier', versionAttendue);
     },
   );
 
@@ -330,11 +391,19 @@ export function enregistrerOutils(serveur: McpServer, depot: DepotDossiers, aute
           .min(1)
           .max(200)
           .describe('Lignes à ajouter. Les champs absents prennent leur valeur par défaut.'),
+        versionAttendue: zVersionAttendue,
       },
     },
-    async ({ dossierId, liste, lignes }) => {
+    async ({ dossierId, liste, lignes, versionAttendue }) => {
       const operations: Operation[] = lignes.map((ligne) => ({ action: 'ajouter_ligne', liste, ligne }));
-      return ecrire(depot, auteur, dossierId, operations, `Ajout de ${lignes.length} ligne(s) dans ${liste}`);
+      return ecrire(
+        depot,
+        auteur,
+        dossierId,
+        operations,
+        `Ajout de ${lignes.length} ligne(s) dans ${liste}`,
+        versionAttendue,
+      );
     },
   );
 
@@ -342,17 +411,32 @@ export function enregistrerOutils(serveur: McpServer, depot: DepotDossiers, aute
     'modifier_ligne',
     {
       title: 'Modifier une ligne',
-      description:
-        'Modifie les champs d’une ligne existante, identifiée par son identifiant obtenu avec lire_dossier. Seuls les champs fournis sont écrasés : les autres, y compris ceux saisis au clavier dans l’interface, sont préservés.',
+      description: [
+        'Modifie les champs d’une ligne existante, identifiée par son identifiant obtenu avec lire_dossier.',
+        'Seuls les champs fournis sont écrasés ; les autres sont préservés.',
+        '',
+        'Attention aux champs de type tableau — montants, pourcentages, effectifs, brutMensuel,',
+        'tauxCroissance : ils sont remplacés en entier. Renvoyer un tableau recopié depuis une lecture',
+        'antérieure efface la valeur qu’un exercice a pu recevoir au clavier entre-temps. Relire le',
+        'dossier juste avant, et transmettre versionAttendue.',
+      ].join('\n'),
       inputSchema: {
         dossierId: zDossierId,
         liste: zCheminListe,
         id: z.string().min(1).describe('Identifiant de la ligne.'),
         champs: z.record(z.unknown()).describe('Champs à modifier et leurs nouvelles valeurs.'),
+        versionAttendue: zVersionAttendue,
       },
     },
-    async ({ dossierId, liste, id, champs }) =>
-      ecrire(depot, auteur, dossierId, [{ action: 'modifier_ligne', liste, id, champs }], `Modification de ${id}`),
+    async ({ dossierId, liste, id, champs, versionAttendue }) =>
+      ecrire(
+        depot,
+        auteur,
+        dossierId,
+        [{ action: 'modifier_ligne', liste, id, champs }],
+        `Modification de ${id}`,
+        versionAttendue,
+      ),
   );
 
   serveur.registerTool(
@@ -360,10 +444,22 @@ export function enregistrerOutils(serveur: McpServer, depot: DepotDossiers, aute
     {
       title: 'Supprimer une ligne',
       description: 'Supprime définitivement une ligne d’une section.',
-      inputSchema: { dossierId: zDossierId, liste: zCheminListe, id: z.string().min(1) },
+      inputSchema: {
+        dossierId: zDossierId,
+        liste: zCheminListe,
+        id: z.string().min(1),
+        versionAttendue: zVersionAttendue,
+      },
     },
-    async ({ dossierId, liste, id }) =>
-      ecrire(depot, auteur, dossierId, [{ action: 'supprimer_ligne', liste, id }], `Suppression de ${id}`),
+    async ({ dossierId, liste, id, versionAttendue }) =>
+      ecrire(
+        depot,
+        auteur,
+        dossierId,
+        [{ action: 'supprimer_ligne', liste, id }],
+        `Suppression de ${id}`,
+        versionAttendue,
+      ),
   );
 
   serveur.registerTool(
@@ -376,10 +472,18 @@ export function enregistrerOutils(serveur: McpServer, depot: DepotDossiers, aute
         dossierId: zDossierId,
         operations: z.array(zOperation).min(1).max(500),
         commentaire: z.string().max(500).default(''),
+        versionAttendue: zVersionAttendue,
       },
     },
-    async ({ dossierId, operations, commentaire }) =>
-      ecrire(depot, auteur, dossierId, operations, commentaire || 'Opérations groupées'),
+    async ({ dossierId, operations, commentaire, versionAttendue }) =>
+      ecrire(
+        depot,
+        auteur,
+        dossierId,
+        operations,
+        commentaire || 'Opérations groupées',
+        versionAttendue,
+      ),
   );
 
   // ─── Calcul et contrôle ─────────────────────────────────────────────────────

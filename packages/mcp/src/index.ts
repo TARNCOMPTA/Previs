@@ -31,6 +31,12 @@ graphique : les deux écrivent dans le même dossier, en temps réel.
   de proposer une trame sans présumer des montants.
 - **Ne jamais boucher un écart de bilan.** Si un contrôle signale un écart, en chercher
   la cause dans le besoin en fonds de roulement ou les flux, jamais dans un compte d’attente.
+- **Ne jamais écraser une saisie faite au clavier.** L’expert-comptable travaille dans
+  l’interface pendant que vous écrivez. Relire le dossier juste avant d’écrire, et
+  transmettre « versionAttendue » à chaque outil d’écriture : le serveur refuse alors une
+  écriture fondée sur une lecture périmée au lieu de remplacer un chiffre saisi entre-temps.
+  Attention en particulier aux champs de type tableau — « montants », « pourcentages »,
+  « effectifs », « brutMensuel » : ils sont remplacés en entier, jamais fusionnés.
 - **Signaler une incohérence économique.** Une croissance de 200 % sans justification,
   une trésorerie durablement négative ou une capacité de remboursement au-delà de cinq
   ans doivent être portées à la connaissance de l’expert-comptable.
