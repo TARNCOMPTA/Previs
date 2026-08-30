@@ -1,0 +1,19 @@
+services:
+  previs:
+    build: .
+    image: previs:latest
+    container_name: previs
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      DATABASE_PATH: /app/data/previs.db
+      CHROMIUM_PATH: /usr/bin/chromium
+    volumes:
+      # La base SQLite et ses journaux : c'est le seul état à sauvegarder.
+      - ./data:/app/data
+    ports:
+      # Publié uniquement sur la boucle locale : nginx assure le HTTPS public.
+      - '127.0.0.1:8080:8080'
+    # Chromium a besoin de mémoire partagée pour composer les pages du PDF.
+    shm_size: '512m'

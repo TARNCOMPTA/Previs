@@ -336,12 +336,14 @@ function ModaleJeton({
 
 /** Affichage unique du jeton en clair, avec la configuration à coller dans Claude. */
 function ModaleJetonCree({ libelle, jeton, onFermer }: { libelle: string; jeton: string; onFermer: () => void }) {
+  // Le serveur MCP n'est pas publié sur npm : il est exécuté depuis l'installation
+  // du VPS, ou joint directement en HTTP sur /mcp.
   const configuration = JSON.stringify(
     {
       mcpServers: {
         previs: {
-          command: 'npx',
-          args: ['-y', '@previs/mcp'],
+          command: 'node',
+          args: ['/opt/previs/packages/mcp/dist/stdio.js'],
           env: { PREVIS_URL: window.location.origin, PREVIS_TOKEN: jeton },
         },
       },

@@ -20,7 +20,22 @@ async function obtenirNavigateur(): Promise<Browser> {
   ouvertureEnCours = chromium
     .launch({
       executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium',
-      args: ['--no-sandbox', '--disable-dev-shm-usage', '--font-render-hinting=none'],
+      // Le document n'utilise aucune ressource externe : tout le trafic sortant de
+      // Chromium est coupé, y compris ses services d'arrière-plan.
+      args: [
+        '--no-sandbox',
+        '--disable-dev-shm-usage',
+        '--font-render-hinting=none',
+        '--disable-background-networking',
+        '--disable-component-update',
+        '--disable-default-apps',
+        '--disable-extensions',
+        '--disable-sync',
+        '--no-first-run',
+        '--no-default-browser-check',
+        '--metrics-recording-only',
+        '--mute-audio',
+      ],
     })
     .then((b) => {
       navigateur = b;

@@ -1,0 +1,41 @@
+# Unité systemd — alternative à Docker, pour une installation directe sur le VPS.
+# Copier dans /etc/systemd/system/previs.service, puis :
+#   sudo systemctl daemon-reload && sudo systemctl enable --now previs
+
+[Unit]
+Description=Previs — logiciel de prévisionnel financier TARN COMPTA
+Documentation=file:///opt/previs/deploy/README-deploiement.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=previs
+Group=previs
+WorkingDirectory=/opt/previs
+EnvironmentFile=/opt/previs/.env
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node packages/server/dist/index.js
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+# Cloisonnement : le service n'a besoin d'écrire que dans son répertoire de données.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/previs/data
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=previs
+
+[Install]
+WantedBy=multi-user.target
