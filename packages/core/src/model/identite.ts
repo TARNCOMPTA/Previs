@@ -71,7 +71,7 @@ export const zIdentite = z.object({
   adresse: zAdresse.default({ voie: '', complement: '', codePostal: '', ville: '' }),
   email: z.string().max(150).default(''),
   telephone: z.string().max(30).default(''),
-  dirigeants: z.array(zDirigeant).default([]),
+  dirigeants: z.array(zDirigeant).max(50).default([]),
   /**
    * Introduction rédigée (4 à 6 paragraphes) reprise telle quelle dans le PDF.
    * Séparer les paragraphes par une ligne vide.

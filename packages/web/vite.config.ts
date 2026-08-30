@@ -23,7 +23,9 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
-    sourcemap: true,
+    // Les cartes de source publieraient le code du moteur et les libellés internes
+    // sur un service exposé : elles restent réservées au mode développement.
+    sourcemap: false,
     chunkSizeWarningLimit: 1500,
     rollupOptions: {
       output: {

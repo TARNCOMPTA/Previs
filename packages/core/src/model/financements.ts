@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { zExercice, zLigneBase, zMois, zMontant, zTaux } from './common.js';
+import { zExercice, zLigneBase, zMois, zMontant, zTaux, EXERCICES_MAX, LIGNES_MAX } from './common.js';
 
 export const zTypeApport = z.enum([
   'capital',
@@ -26,7 +26,7 @@ export const zApport = zLigneBase.extend({
   exercice: zExercice.default(0),
   mois: zMois.default(1),
   /** Remboursements du compte courant, un montant par exercice (positif = remboursé). */
-  remboursements: z.array(zMontant).default([]),
+  remboursements: z.array(zMontant).max(EXERCICES_MAX).default([]),
 });
 export type Apport = z.infer<typeof zApport>;
 
@@ -101,9 +101,9 @@ export const zCreditBail = zLigneBase.extend({
 export type CreditBail = z.infer<typeof zCreditBail>;
 
 export const zSectionFinancements = z.object({
-  apports: z.array(zApport).default([]),
-  emprunts: z.array(zEmprunt).default([]),
-  subventions: z.array(zSubvention).default([]),
-  creditsBaux: z.array(zCreditBail).default([]),
+  apports: z.array(zApport).max(LIGNES_MAX).default([]),
+  emprunts: z.array(zEmprunt).max(LIGNES_MAX).default([]),
+  subventions: z.array(zSubvention).max(LIGNES_MAX).default([]),
+  creditsBaux: z.array(zCreditBail).max(LIGNES_MAX).default([]),
 });
 export type SectionFinancements = z.infer<typeof zSectionFinancements>;

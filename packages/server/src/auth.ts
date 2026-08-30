@@ -101,11 +101,13 @@ export class ServiceAuthentification {
     const valide = await verifierMotDePasse(motDePasse, empreinte);
     if (!ligne || !valide || ligne.actif !== 1) return null;
 
+    // Seule l'empreinte de l'identifiant de session est conservée : une copie de la
+    // base — une sauvegarde égarée, par exemple — ne permet pas de rejouer une session.
     const session = nouvelIdentifiantSession();
     const expiration = new Date(Date.now() + DUREE_SESSION_JOURS * 86400000).toISOString();
     this.base
       .prepare('INSERT INTO sessions (id, utilisateur_id, cree_le, expire_le) VALUES (?, ?, ?, ?)')
-      .run(session, ligne.id, new Date().toISOString(), expiration);
+      .run(empreinteJeton(session), ligne.id, new Date().toISOString(), expiration);
     this.base
       .prepare('UPDATE utilisateurs SET derniere_connexion = ? WHERE id = ?')
       .run(new Date().toISOString(), ligne.id);
@@ -114,7 +116,7 @@ export class ServiceAuthentification {
   }
 
   deconnecter(session: string): void {
-    this.base.prepare('DELETE FROM sessions WHERE id = ?').run(session);
+    this.base.prepare('DELETE FROM sessions WHERE id = ?').run(empreinteJeton(session));
   }
 
   /** Résout une session valide et non expirée. */
@@ -125,8 +127,32 @@ export class ServiceAuthentification {
          JOIN utilisateurs u ON u.id = s.utilisateur_id
          WHERE s.id = ? AND s.expire_le > ? AND u.actif = 1`,
       )
-      .get(session, new Date().toISOString()) as LigneUtilisateur | undefined;
+      .get(empreinteJeton(session), new Date().toISOString()) as LigneUtilisateur | undefined;
     return ligne ? versUtilisateur(ligne) : null;
+  }
+
+  /**
+   * Vérifie un mot de passe sans ouvrir de session.
+   *
+   * `connecter()` en ouvrait une à chaque changement de mot de passe, laissant en base
+   * des sessions orphelines jamais utilisées.
+   */
+  async verifierIdentifiants(email: string, motDePasse: string): Promise<boolean> {
+    const ligne = this.base
+      .prepare('SELECT * FROM utilisateurs WHERE email = ?')
+      .get(email.toLowerCase().trim()) as LigneUtilisateur | undefined;
+    const empreinte = ligne?.empreinte ?? (await hacherMotDePasse('empreinte-de-comparaison'));
+    const valide = await verifierMotDePasse(motDePasse, empreinte);
+    return Boolean(ligne) && valide && ligne?.actif === 1;
+  }
+
+  /** Nombre de comptes administrateurs encore actifs. */
+  compterAdministrateurs(): number {
+    return (
+      this.base
+        .prepare("SELECT COUNT(*) AS n FROM utilisateurs WHERE role = 'admin' AND actif = 1")
+        .get() as { n: number }
+    ).n;
   }
 
   /** Résout un jeton d'API et met à jour sa date de dernière utilisation. */
@@ -187,11 +213,24 @@ export function exiger(
     reponse.code(401).send({ erreur: 'Authentification requise.', code: 'non_authentifie' });
     return false;
   }
-  if (options.admin && identite.utilisateur.role !== 'admin') {
-    reponse
-      .code(403)
-      .send({ erreur: 'Cette action est réservée aux administrateurs.', code: 'interdit' });
-    return false;
+  if (options.admin) {
+    // Un jeton d'API vit en clair dans un fichier de configuration, sur un poste :
+    // il ne doit jamais permettre de gérer les comptes ni d'émettre d'autres jetons,
+    // quel que soit le rôle de son titulaire.
+    if (identite.origine === 'mcp') {
+      reponse.code(403).send({
+        erreur:
+          'Un jeton d’API ne donne pas accès à l’administration. Utiliser une session ouverte depuis l’interface.',
+        code: 'interdit',
+      });
+      return false;
+    }
+    if (identite.utilisateur.role !== 'admin') {
+      reponse
+        .code(403)
+        .send({ erreur: 'Cette action est réservée aux administrateurs.', code: 'interdit' });
+      return false;
+    }
   }
   if (options.ecriture && identite.utilisateur.role === 'lecteur') {
     reponse

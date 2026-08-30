@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import { mkdirSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 
 export type BaseDonnees = Database.Database;
@@ -13,13 +13,36 @@ export type BaseDonnees = Database.Database;
  * dossier emporte son historique de versions.
  */
 export function ouvrirBase(chemin: string): BaseDonnees {
-  if (chemin !== ':memory:') mkdirSync(dirname(chemin), { recursive: true });
+  if (chemin !== ':memory:') mkdirSync(dirname(chemin), { recursive: true, mode: 0o700 });
   const base = new Database(chemin);
   base.pragma('journal_mode = WAL');
   base.pragma('foreign_keys = ON');
   base.pragma('busy_timeout = 5000');
   migrer(base);
+  if (chemin !== ':memory:') restreindreAcces(chemin);
   return base;
+}
+
+/**
+ * Réserve la base au compte qui fait tourner le service.
+ *
+ * Le fichier contient les dossiers des clients du cabinet et les empreintes des
+ * mots de passe : la permission par défaut de SQLite (0644) l'exposerait à tout
+ * compte du serveur. Les journaux WAL portent les mêmes données.
+ */
+function restreindreAcces(chemin: string): void {
+  for (const fichier of [chemin, `${chemin}-wal`, `${chemin}-shm`]) {
+    try {
+      if (existsSync(fichier)) chmodSync(fichier, 0o600);
+    } catch {
+      // Un système de fichiers sans permissions POSIX (montage Windows) : sans objet.
+    }
+  }
+  try {
+    chmodSync(dirname(chemin), 0o700);
+  } catch {
+    // Idem : le répertoire peut appartenir à l'hôte dans un conteneur.
+  }
 }
 
 /** Migrations idempotentes, exécutées à chaque démarrage. */

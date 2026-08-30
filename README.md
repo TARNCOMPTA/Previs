@@ -141,6 +141,32 @@ erreur, sauf mention explicite du contraire.
 
 ---
 
+## Sécurité
+
+Le logiciel héberge les dossiers de clients réels du cabinet. Les protections sont
+posées par le service lui-même, jamais déléguées au seul reverse-proxy :
+
+| Menace | Réponse |
+|---|---|
+| Vol de la base ou d'une sauvegarde | Mots de passe hachés par scrypt, jetons d'API et identifiants de session stockés en SHA-256 ; base et journaux WAL créés en 0600 |
+| Essai de mots de passe en série | Deux compteurs indépendants — dix échecs par adresse et par quart d'heure, vingt par compte et par heure |
+| Adresse client usurpée | `X-Forwarded-For` n'est cru que des réseaux listés dans `TRUST_PROXY`, jamais de tout le monde |
+| Requête intersite (CSRF) | Cookie `SameSite=lax`, et contrôle de l'en-tête `Origin` sur toute écriture authentifiée par session |
+| Jeton d'API dérobé sur un poste | Un jeton n'ouvre ni la gestion des comptes ni l'émission d'autres jetons, quel que soit le rôle de son titulaire |
+| Injection dans le document PDF | Échappement systématique du contenu du dossier, et JavaScript coupé dans le Chromium qui imprime |
+| Pollution de prototype par l'assistant | Chemin d'opération borné aux sections du dossier, segments `__proto__`, `prototype` et `constructor` refusés, lignes nettoyées avant fusion |
+| Dossier démesuré envoyé à l'API | Toutes les listes du modèle sont plafonnées (500 lignes, 20 exercices) |
+| Perte de l'accès administrateur | Le dernier administrateur actif ne peut être ni supprimé, ni rétrogradé, ni désactivé |
+| Divulgation par un message d'erreur | En production, le détail d'une erreur interne reste dans le journal ; la réponse ne le porte pas |
+| Saturation par l'export PDF | Trente rendus par compte et par quart d'heure |
+
+Chaque point est verrouillé par un essai : `packages/core/test/securite.test.ts` pour le
+modèle et les opérations, `packages/server/test/securite.test.ts` pour l'API.
+
+Le journal d'audit consigne connexions, échecs de connexion, changements de mot de
+passe, créations et suppressions de comptes et de jetons, et exports PDF. Il ne
+consigne jamais un mot de passe, un jeton en clair ni le contenu d'un dossier.
+
 ## Déploiement
 
 Voir **[deploy/README-deploiement.md](deploy/README-deploiement.md)** : procédure

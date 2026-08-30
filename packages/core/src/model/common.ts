@@ -1,5 +1,16 @@
 import { z } from 'zod';
 
+/**
+ * Bornes de taille du modèle.
+ *
+ * Un dossier arrive par le réseau : sans plafond, une requête forgée pourrait
+ * demander le calcul de centaines de milliers de lignes et immobiliser le serveur.
+ * Ces valeurs sont très au-delà de ce qu'un dossier réel contient.
+ */
+export const EXERCICES_MAX = 20;
+export const MOIS_MAX = 24;
+export const LIGNES_MAX = 500;
+
 /** Identifiant stable d'une ligne. Généré côté client ou côté LLM. */
 export const zId = z.string().min(1).max(64);
 
@@ -29,8 +40,11 @@ export const zRepartition = z.discriminatedUnion('type', [
   z.object({ type: z.literal('lineaire') }),
   z.object({ type: z.literal('ponctuel'), mois: zMois }),
   z.object({ type: z.literal('demarrage'), moisDebut: zMois }),
-  z.object({ type: z.literal('saisonnalite'), poids: z.array(z.number().min(0)).min(1).max(24) }),
-  z.object({ type: z.literal('mensuel'), montants: z.array(z.array(zMontant)) }),
+  z.object({ type: z.literal('saisonnalite'), poids: z.array(z.number().min(0)).min(1).max(MOIS_MAX) }),
+  z.object({
+    type: z.literal('mensuel'),
+    montants: z.array(z.array(zMontant).max(MOIS_MAX)).max(EXERCICES_MAX),
+  }),
 ]);
 export type Repartition = z.infer<typeof zRepartition>;
 
@@ -50,7 +64,7 @@ export const LIBELLES_REPARTITION: Record<Repartition['type'], string> = {
  * les valeurs manquantes sont traitées comme 0 par le moteur (jamais une erreur bloquante,
  * pour que le LLM puisse remplir un dossier progressivement).
  */
-export const zMontantsParExercice = z.array(zMontant);
+export const zMontantsParExercice = z.array(zMontant).max(EXERCICES_MAX);
 export type MontantsParExercice = number[];
 
 /** Taux de TVA usuels en France métropolitaine. */

@@ -7,6 +7,8 @@ import {
   zMontant,
   zRepartition,
   zTaux,
+  EXERCICES_MAX,
+  LIGNES_MAX,
 } from './common.js';
 
 /**
@@ -53,9 +55,9 @@ export const zLigneCharge = zLigneBase.extend({
   compte: z.string().max(10).optional(),
   mode: zModeCharge.default('montant'),
   /** Mode `montant` : charge HT par exercice. */
-  montants: z.array(zMontant).default([]),
+  montants: z.array(zMontant).max(EXERCICES_MAX).default([]),
   /** Mode `pourcentage_ca` : pourcentage du chiffre d'affaires total, par exercice. */
-  pourcentages: z.array(zTaux).default([]),
+  pourcentages: z.array(zTaux).max(EXERCICES_MAX).default([]),
   tauxTva: zTaux.default(20),
   /** TVA déductible sur cette charge (faux pour les carburants non déductibles, par ex.). */
   tvaDeductible: z.boolean().default(true),
@@ -96,13 +98,13 @@ export const LIBELLES_STATUT_PERSONNEL: Record<StatutPersonnel, string> = {
 export const zLignePersonnel = zLigneBase.extend({
   statut: zStatutPersonnel.default('salarie'),
   /** Effectif par exercice (peut être fractionnaire pour un temps partiel). */
-  effectifs: z.array(z.number().min(0).max(999)).default([]),
+  effectifs: z.array(z.number().min(0).max(999)).max(EXERCICES_MAX).default([]),
   /** Salaire brut mensuel unitaire par exercice. */
-  brutMensuel: z.array(zMontant).default([]),
+  brutMensuel: z.array(zMontant).max(EXERCICES_MAX).default([]),
   /** Nombre de mois rémunérés dans l'exercice (13 si treizième mois). */
-  nbMoisParExercice: z.array(z.number().min(0).max(24)).default([]),
+  nbMoisParExercice: z.array(z.number().min(0).max(24)).max(EXERCICES_MAX).default([]),
   /** Primes annuelles globales par exercice, hors brut mensuel. */
-  primes: z.array(zMontant).default([]),
+  primes: z.array(zMontant).max(EXERCICES_MAX).default([]),
   /** Exercice d'entrée dans l'effectif. */
   exerciceEmbauche: zExercice.default(0),
   /** Mois d'entrée au sein de cet exercice. */
@@ -112,12 +114,12 @@ export const zLignePersonnel = zLigneBase.extend({
   /** Taux de cotisations TNS spécifique en %, sinon le taux général des paramètres. */
   tauxCotisationsTns: zTaux.optional(),
   /** Aide à l'embauche ou exonération, en déduction des charges, par exercice. */
-  aides: z.array(zMontant).default([]),
+  aides: z.array(zMontant).max(EXERCICES_MAX).default([]),
 });
 export type LignePersonnel = z.infer<typeof zLignePersonnel>;
 
 export const zSectionCharges = z.object({
-  lignes: z.array(zLigneCharge).default([]),
-  personnel: z.array(zLignePersonnel).default([]),
+  lignes: z.array(zLigneCharge).max(LIGNES_MAX).default([]),
+  personnel: z.array(zLignePersonnel).max(LIGNES_MAX).default([]),
 });
 export type SectionCharges = z.infer<typeof zSectionCharges>;

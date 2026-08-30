@@ -34,6 +34,10 @@ export interface Configuration {
   cheminStatique: string;
   cheminChromium: string;
   cookiesSecurises: boolean;
+  /** Réseaux dont l'en-tête `X-Forwarded-For` fait foi pour déterminer l'adresse du client. */
+  confianceProxy: string;
+  /** Niveau de journalisation Fastify (`silent` pour les essais). */
+  niveauJournal: string;
   mcpHttpActif: boolean;
   production: boolean;
   bootstrap: { email: string; motDePasse: string; nom: string };
@@ -61,6 +65,11 @@ export function chargerConfiguration(racine = process.cwd()): Configuration {
     cheminStatique: resolve(racine, process.env.STATIC_PATH ?? './packages/web/dist'),
     cheminChromium: process.env.CHROMIUM_PATH ?? '/usr/bin/chromium',
     cookiesSecurises: (process.env.SECURE_COOKIES ?? String(production)) === 'true',
+    // Faire confiance à tout le monde laisserait n'importe quel client forger son
+    // adresse et contourner ainsi la limitation des tentatives de connexion. Seuls
+    // le proxy local et un réseau de conteneurs privé sont crus par défaut.
+    confianceProxy: process.env.TRUST_PROXY ?? 'loopback, uniquelocal',
+    niveauJournal: process.env.LOG_LEVEL ?? (production ? 'info' : 'warn'),
     mcpHttpActif: (process.env.MCP_HTTP_ENABLED ?? 'true') === 'true',
     production,
     bootstrap: {

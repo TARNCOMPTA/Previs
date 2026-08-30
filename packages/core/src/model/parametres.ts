@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { zMontant, zTaux } from './common.js';
+import { zMontant, zTaux, EXERCICES_MAX, LIGNES_MAX } from './common.js';
 
 /** Périodicité de déclaration et de décaissement de la TVA. */
 export const zRegimeTva = z.enum(['mensuel', 'trimestriel', 'annuel', 'franchise']);
@@ -105,7 +105,7 @@ export const zParametres = z.object({
   bfr: zParametresBfr.default({}),
 
   /** Cotisation foncière des entreprises estimée, un montant par exercice. */
-  cfe: z.array(zMontant).default([]),
+  cfe: z.array(zMontant).max(EXERCICES_MAX).default([]),
   /** Trésorerie disponible au premier jour du prévisionnel (reprise, apport déjà versé…). */
   tresorerieInitiale: zMontant.default(0),
   /** Dotation à la réserve légale, en pourcentage du bénéfice (sociétés uniquement). */

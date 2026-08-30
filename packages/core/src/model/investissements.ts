@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { zExercice, zLigneBase, zMois, zMontant, zTaux } from './common.js';
+import { zExercice, zLigneBase, zMois, zMontant, zTaux, EXERCICES_MAX, LIGNES_MAX } from './common.js';
 
 /** Grande masse du bilan à laquelle se rattache l'immobilisation. */
 export const zCategorieInvestissement = z.enum([
@@ -69,7 +69,7 @@ export const zCession = zLigneBase.extend({
 export type Cession = z.infer<typeof zCession>;
 
 export const zSectionInvestissements = z.object({
-  lignes: z.array(zLigneInvestissement).default([]),
-  cessions: z.array(zCession).default([]),
+  lignes: z.array(zLigneInvestissement).max(LIGNES_MAX).default([]),
+  cessions: z.array(zCession).max(LIGNES_MAX).default([]),
 });
 export type SectionInvestissements = z.infer<typeof zSectionInvestissements>;

@@ -91,13 +91,16 @@ manquante.
 
 ```bash
 npm run typecheck      # les quatre paquets
-npm test               # 46 tests du moteur
+npm test               # 70 essais du moteur et du modèle, 22 essais de l'API
 npm run build
 ```
 
 Pour une modification du moteur, exécuter les tests est **obligatoire** : ils
-vérifient l'équilibre du bilan et les cinq contrôles de cohérence sur un dossier
+vérifient l'équilibre du bilan et les contrôles de cohérence sur un dossier
 complet, pour chacun des trois régimes.
+
+Les essais de l'API (`packages/server/test/`) passent par `app.inject()` : ni port
+ouvert, ni Chromium lancé, base en mémoire.
 
 Pour une modification de l'interface, la lancer réellement : `npm run dev`, puis
 parcourir les écrans touchés. Un typecheck qui passe ne prouve pas qu'un écran
@@ -109,7 +112,26 @@ Elle doit rester sous six millisecondes.
 
 ## Sécurité
 
-Mots de passe hachés par scrypt, jetons d'API stockés hachés en SHA-256,
-sessions opaques en base, limitation des tentatives de connexion. Ne jamais
-consigner un mot de passe, un jeton en clair ou le contenu d'un dossier dans les
-journaux. Le serveur refuse de démarrer en production sans `SESSION_SECRET`.
+Mots de passe hachés par scrypt ; jetons d'API et identifiants de session stockés
+en SHA-256 ; base SQLite et journaux WAL en 0600 ; limitation des tentatives de
+connexion par adresse **et** par compte. Ne jamais consigner un mot de passe, un
+jeton en clair ou le contenu d'un dossier dans les journaux. Le serveur refuse de
+démarrer en production sans `SESSION_SECRET`.
+
+Quatre règles à ne pas défaire :
+
+1. **Un chemin d'opération est borné.** `resoudreChemin()` n'accepte que les sept
+   sections du dossier, refuse `__proto__`, `prototype` et `constructor`, et ne
+   traverse que des propriétés propres. Toute ligne venue de l'assistant passe par
+   `nettoyerLigne()` avant d'être fusionnée.
+2. **Un jeton d'API n'administre pas.** Il vit en clair dans un fichier de
+   configuration : `exiger({ admin: true })` le refuse quel que soit le rôle.
+3. **`trustProxy` n'est jamais `true`.** Sinon n'importe quel client forge son
+   adresse et contourne la limitation des tentatives.
+4. **Une écriture par cookie exige un `Origin` connu.** C'est la seconde barrière
+   derrière `SameSite=lax` ; les appels par jeton en sont dispensés, un en-tête
+   personnalisé ne se forgeant pas depuis une page tierce.
+
+`packages/core/test/securite.test.ts` et `packages/server/test/securite.test.ts`
+verrouillent ces points. Un échec y signale une protection retirée, pas un chiffre
+qui a bougé.

@@ -7,12 +7,14 @@ import {
   zMontant,
   zRepartition,
   zTaux,
+  EXERCICES_MAX,
+  LIGNES_MAX,
 } from './common.js';
 
 /** Produit ou charge exceptionnel, hors exploitation courante. */
 export const zLigneExceptionnelle = zLigneBase.extend({
   sens: z.enum(['produit', 'charge']).default('produit'),
-  montants: z.array(zMontant).default([]),
+  montants: z.array(zMontant).max(EXERCICES_MAX).default([]),
   repartition: zRepartition.default(REPARTITION_LINEAIRE),
   tauxTva: zTaux.default(0),
   /** Faux pour une écriture sans flux (reprise de provision, par exemple). */
@@ -32,7 +34,7 @@ export type TypeDistribution = z.infer<typeof zTypeDistribution>;
 export const zLigneDistribution = zLigneBase.extend({
   type: zTypeDistribution.default('dividendes'),
   /** Montant distribué, par exercice de versement. */
-  montants: z.array(zMontant).default([]),
+  montants: z.array(zMontant).max(EXERCICES_MAX).default([]),
   repartition: zRepartition.default(REPARTITION_LINEAIRE),
 });
 export type LigneDistribution = z.infer<typeof zLigneDistribution>;
@@ -50,7 +52,7 @@ export const zLignePassifDeclare = zLigneBase.extend({
   creancier: z.string().max(150).default(''),
   nature: z.enum(['privilegie', 'chirographaire', 'fiscal_social', 'bancaire']).default('chirographaire'),
   montantDeclare: zMontant.default(0),
-  echeances: z.array(zEcheancePassif).default([]),
+  echeances: z.array(zEcheancePassif).max(240).default([]),
 });
 export type LignePassifDeclare = z.infer<typeof zLignePassifDeclare>;
 
@@ -76,9 +78,9 @@ export const zBilanOuverture = z.object({
 export type BilanOuverture = z.infer<typeof zBilanOuverture>;
 
 export const zSectionAutres = z.object({
-  exceptionnels: z.array(zLigneExceptionnelle).default([]),
-  distributions: z.array(zLigneDistribution).default([]),
-  passifDeclare: z.array(zLignePassifDeclare).default([]),
+  exceptionnels: z.array(zLigneExceptionnelle).max(LIGNES_MAX).default([]),
+  distributions: z.array(zLigneDistribution).max(LIGNES_MAX).default([]),
+  passifDeclare: z.array(zLignePassifDeclare).max(LIGNES_MAX).default([]),
   bilanOuverture: zBilanOuverture.default({}),
   /** Notes libres du dossier, reprises en fin de PDF. */
   notes: z.string().max(20000).default(''),

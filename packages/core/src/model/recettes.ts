@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { REPARTITION_LINEAIRE, zLigneBase, zMontant, zRepartition, zTaux } from './common.js';
+import { REPARTITION_LINEAIRE, zLigneBase, zMontant, zRepartition, zTaux, EXERCICES_MAX, LIGNES_MAX } from './common.js';
 
 /** Nature comptable de la recette — détermine son poste au compte de résultat et dans les SIG. */
 export const zNatureRecette = z.enum([
@@ -45,19 +45,19 @@ export const zLigneRecette = zLigneBase.extend({
   mode: zModeRecette.default('montants'),
 
   /** Mode `montants` : chiffre d'affaires HT par exercice. */
-  montants: z.array(zMontant).default([]),
+  montants: z.array(zMontant).max(EXERCICES_MAX).default([]),
 
   /** Mode `croissance` : base du premier exercice. */
   base: zMontant.default(0),
   /** Mode `croissance` : taux de croissance en % appliqué à l'exercice précédent (index 0 ignoré). */
-  tauxCroissance: z.array(zTaux).default([]),
+  tauxCroissance: z.array(zTaux).max(EXERCICES_MAX).default([]),
 
   /** Modes `volume_prix` et `capacite` : quantités par exercice. */
-  quantites: z.array(zMontant).default([]),
+  quantites: z.array(zMontant).max(EXERCICES_MAX).default([]),
   /** Modes `volume_prix` et `capacite` : prix unitaire HT par exercice. */
-  prixUnitaire: z.array(zMontant).default([]),
+  prixUnitaire: z.array(zMontant).max(EXERCICES_MAX).default([]),
   /** Mode `capacite` : taux de remplissage en % par exercice. */
-  tauxRemplissage: z.array(zTaux).default([]),
+  tauxRemplissage: z.array(zTaux).max(EXERCICES_MAX).default([]),
   /** Unité affichée dans l'interface (« couverts », « séances », « heures »…). */
   unite: z.string().max(40).default(''),
 
@@ -78,6 +78,6 @@ export const zLigneRecette = zLigneBase.extend({
 export type LigneRecette = z.infer<typeof zLigneRecette>;
 
 export const zSectionRecettes = z.object({
-  lignes: z.array(zLigneRecette).default([]),
+  lignes: z.array(zLigneRecette).max(LIGNES_MAX).default([]),
 });
 export type SectionRecettes = z.infer<typeof zSectionRecettes>;

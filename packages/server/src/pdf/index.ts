@@ -74,7 +74,9 @@ export async function genererPdf(
 ): Promise<Uint8Array> {
   const html = construireHtml(dossier, resultats, options);
   const b = await obtenirNavigateur();
-  const contexte = await b.newContext({ locale: 'fr-FR' });
+  // Le document est entièrement statique : couper JavaScript retire au rendu tout
+  // moyen d'exécuter du code, quand bien même une échappée manquerait dans le gabarit.
+  const contexte = await b.newContext({ locale: 'fr-FR', javaScriptEnabled: false });
   const page = await contexte.newPage();
 
   try {

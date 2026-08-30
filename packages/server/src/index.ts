@@ -26,10 +26,12 @@ export async function construireApplication(config: Configuration): Promise<Appl
   const depot = new DepotSqlite(base);
 
   const app = Fastify({
-    logger: { level: config.production ? 'info' : 'warn' },
+    logger: { level: config.niveauJournal },
     bodyLimit: 16 * 1024 * 1024,
-    trustProxy: true,
+    trustProxy: config.confianceProxy,
   });
+
+  ajouterEntetesSecurite(app);
 
   // Un dossier volumineux pèse une cinquantaine de kilo-octets et ses états calculés
   // le double : la compression divise ces échanges par dix sur une liaison lente.
@@ -50,10 +52,7 @@ export async function construireApplication(config: Configuration): Promise<Appl
       cacheControl: false,
       setHeaders(reponse, chemin) {
         const durable = chemin.includes(`${sep}assets${sep}`) && !chemin.endsWith('.html');
-        reponse.setHeader(
-          'cache-control',
-          durable ? 'public, max-age=31536000, immutable' : 'no-cache',
-        );
+        reponse.header('cache-control', durable ? 'public, max-age=31536000, immutable' : 'no-cache');
       },
     });
     // Toute route inconnue hors API renvoie l'interface : le routage est côté client.
@@ -76,6 +75,43 @@ export async function construireApplication(config: Configuration): Promise<Appl
   });
 
   return { app, base, auth, depot };
+}
+
+/**
+ * En-têtes de sécurité posés par le service lui-même.
+ *
+ * nginx les ajoute déjà en production, mais le serveur peut aussi être exposé
+ * directement — une machine du cabinet, un essai — et la protection ne doit pas
+ * dépendre du bon paramétrage d'une couche en amont.
+ *
+ * La politique de contenu est stricte : l'interface ne charge ni script en ligne,
+ * ni ressource distante. Seules les feuilles de style en ligne sont tolérées, React
+ * posant des attributs `style` sur les éléments qu'il rend.
+ */
+function ajouterEntetesSecurite(app: import('fastify').FastifyInstance): void {
+  const politique = [
+    "default-src 'self'",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data:",
+    "font-src 'self'",
+    "connect-src 'self'",
+    "object-src 'none'",
+    "base-uri 'none'",
+    "form-action 'self'",
+    "frame-ancestors 'none'",
+  ].join('; ');
+
+  app.addHook('onSend', async (_requete, reponse, charge) => {
+    reponse.header('content-security-policy', politique);
+    reponse.header('x-content-type-options', 'nosniff');
+    reponse.header('x-frame-options', 'DENY');
+    reponse.header('referrer-policy', 'strict-origin-when-cross-origin');
+    reponse.header('cross-origin-opener-policy', 'same-origin');
+    reponse.header('cross-origin-resource-policy', 'same-origin');
+    reponse.header('permissions-policy', 'camera=(), microphone=(), geolocation=(), interest-cohort=()');
+    return charge;
+  });
 }
 
 /**

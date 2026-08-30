@@ -83,8 +83,9 @@ export function nouvelIdentifiant(prefixe: string): string {
 /**
  * Limiteur de tentatives de connexion, en mémoire.
  *
- * Dix échecs par adresse et par quart d'heure : suffisant pour arrêter un essai
- * de mots de passe en série sans gêner un utilisateur qui se trompe de frappe.
+ * La clé est libre : le service en tient deux, l'une par adresse et l'autre par
+ * compte visé. La première arrête un essai de mots de passe en série depuis un
+ * poste, la seconde un essai réparti sur plusieurs adresses contre un même compte.
  */
 export class LimiteurConnexions {
   private readonly tentatives = new Map<string, { compte: number; jusqua: number }>();
@@ -107,6 +108,7 @@ export class LimiteurConnexions {
   echec(cle: string, maintenant = Date.now()): void {
     const entree = this.tentatives.get(cle);
     if (!entree || maintenant > entree.jusqua) {
+      purger(this.tentatives, maintenant);
       this.tentatives.set(cle, { compte: 1, jusqua: maintenant + this.fenetreMs });
       return;
     }
@@ -116,4 +118,53 @@ export class LimiteurConnexions {
   succes(cle: string): void {
     this.tentatives.delete(cle);
   }
+}
+
+/**
+ * Limiteur de débit générique pour les opérations coûteuses.
+ *
+ * L'export PDF lance un rendu Chromium : quelques appels en boucle suffisent à
+ * saturer le processeur du serveur. Un compte authentifié reste donc plafonné.
+ */
+export class LimiteurDebit {
+  private readonly appels = new Map<string, { compte: number; jusqua: number }>();
+
+  constructor(
+    private readonly maximum: number,
+    private readonly fenetreMs: number,
+  ) {}
+
+  /** Enregistre un appel et indique s'il reste sous le plafond. */
+  autoriser(cle: string, maintenant = Date.now()): boolean {
+    const entree = this.appels.get(cle);
+    if (!entree || maintenant > entree.jusqua) {
+      purger(this.appels, maintenant);
+      this.appels.set(cle, { compte: 1, jusqua: maintenant + this.fenetreMs });
+      return true;
+    }
+    entree.compte += 1;
+    return entree.compte <= this.maximum;
+  }
+}
+
+/** Nombre de clés au-delà duquel un compteur en mémoire est nettoyé. */
+const CLES_MAX = 10000;
+
+/**
+ * Retire les fenêtres expirées.
+ *
+ * Sans cela, un attaquant faisant défiler des adresses électroniques inventées ferait
+ * croître la table indéfiniment : la limitation deviendrait elle-même le déni de service.
+ * Au-delà du plafond, la table est vidée — perdre un compteur en cours coûte moins
+ * qu'une fuite de mémoire, et l'essai en série reste arrêté par la clé d'adresse.
+ */
+function purger(table: Map<string, { jusqua: number }>, maintenant: number): void {
+  if (table.size < CLES_MAX) {
+    if (table.size < 64) return;
+    for (const [cle, entree] of table) {
+      if (maintenant > entree.jusqua) table.delete(cle);
+    }
+    return;
+  }
+  table.clear();
 }
