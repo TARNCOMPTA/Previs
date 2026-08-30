@@ -14,7 +14,7 @@
   "dependencies": {
     "@fastify/compress": "^8.3.1",
     "@fastify/cookie": "^11.0.2",
-    "@fastify/static": "^8.0.4",
+    "@fastify/static": "^10.1.3",
     "@previs/core": "*",
     "@previs/mcp": "*",
     "better-sqlite3": "^11.8.1",
