@@ -46,6 +46,7 @@ interface EtatDossier {
   retablir: () => void;
   enregistrer: () => Promise<void>;
   recharger: () => Promise<void>;
+  definirLogo: (logo: string) => Promise<void>;
 }
 
 let minuterieEnregistrement: ReturnType<typeof setTimeout> | null = null;
@@ -365,6 +366,27 @@ export const useDossier = create<EtatDossier>((set, get) => {
       const { fiche } = get();
       if (!fiche) return;
       await get().ouvrir(fiche.id);
+    },
+
+    /**
+     * Dépose ou retire le logo du client.
+     *
+     * Le logo n'appartient pas au contenu versionné du dossier : il part par sa propre
+     * route et n'entre donc ni dans l'historique, ni dans l'enregistrement différé qui
+     * suit la frappe.
+     */
+    async definirLogo(logo: string) {
+      const { fiche } = get();
+      if (!fiche) return;
+      try {
+        const apres = await api.definirLogoDossier(fiche.id, logo);
+        set({ fiche: { ...get().fiche!, logo: apres.logo } });
+      } catch (e) {
+        set({
+          etat: 'erreur',
+          messageErreur: e instanceof Error ? e.message : 'Le dépôt du logo a échoué.',
+        });
+      }
     },
   };
 });

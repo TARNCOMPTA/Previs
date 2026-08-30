@@ -10,17 +10,28 @@ import {
   type Dossier,
   type Resultats,
 } from '@previs/core';
+import { adresseSurUneLigne, CABINET_PAR_DEFAUT, type Cabinet } from '@previs/core';
 import { barresHorizontales, COULEURS, courbe, histogramme } from './graphiques.js';
 import { STYLE } from './style.js';
 
-const CABINET = {
-  nom: 'TARN COMPTA',
-  adresse: '70 Chemin de Mézard',
-  ville: '81000 ALBI',
-  telephone: '05.31.51.15.51',
-  courriel: 'contact@tarncompta.fr',
-  site: 'http://www.tarncompta.com',
-};
+/**
+ * Options de rendu du document.
+ *
+ * Le cabinet et le logo du client sont fournis par l'appelant : rien de l'identité
+ * du cabinet n'est plus écrit en dur, le logiciel peut donc servir un autre cabinet
+ * sans être recompilé.
+ */
+export interface OptionsDocument {
+  titre?: string;
+  cabinet?: Cabinet;
+  logoClient?: string;
+}
+
+/** Un logo posé sur un cartouche clair, lisible sur le bleu de la charte. */
+function cartoucheLogo(logo: string, classe = ''): string {
+  if (!logo) return '';
+  return `<div class="cartouche-logo${classe ? ` ${classe}` : ''}"><img src="${e(logo)}" alt=""></div>`;
+}
 
 function e(texte: unknown): string {
   return String(texte ?? '')
@@ -72,8 +83,9 @@ function fleche(): string {
 export function construireHtml(
   dossier: Dossier,
   r: Resultats,
-  options: { titre?: string } = {},
+  options: OptionsDocument = {},
 ): string {
+  const cabinet = options.cabinet ?? CABINET_PAR_DEFAUT;
   const identite = dossier.identite;
   const exercices = r.exercices;
   const annees = exercices.map((x) => x.libelle);
@@ -727,6 +739,7 @@ export function construireHtml(
 
   return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>${e(raison)} — Dossier prévisionnel</title><style>${STYLE}</style></head><body>
 <div class="couverture">
+  ${cartoucheLogo(cabinet.logo, 'logo-cabinet')}
   <h1>DOSSIER PRÉVISIONNEL</h1>
   <div class="sous-titre">${e(periode)}</div>
   <div class="activite">${e(identite.activite)}</div>
@@ -734,6 +747,7 @@ export function construireHtml(
   <div class="blocs">
     <div>
       <h2>Établi pour</h2>
+      ${cartoucheLogo(options.logoClient ?? '')}
       <p class="nom">${e(raison)}</p>
       <p>${e(identite.formeJuridique)}</p>
       ${identite.adresse.voie ? `<p>${e(identite.adresse.voie)}</p>` : ''}
@@ -742,11 +756,14 @@ export function construireHtml(
     </div>
     <div>
       <h2>Établi par</h2>
-      <p class="nom">${CABINET.nom}</p>
-      <p>${CABINET.adresse}</p>
-      <p>${CABINET.ville}</p>
-      <p>${CABINET.telephone}</p>
-      <p>${CABINET.courriel}</p>
+      <p class="nom">${e(cabinet.nom)}</p>
+      ${cabinet.qualite ? `<p>${e(cabinet.qualite)}</p>` : ''}
+      ${cabinet.expertComptable ? `<p>${e(cabinet.expertComptable)}</p>` : ''}
+      ${cabinet.adresse.voie ? `<p>${e(cabinet.adresse.voie)}</p>` : ''}
+      ${cabinet.adresse.complement ? `<p>${e(cabinet.adresse.complement)}</p>` : ''}
+      ${cabinet.adresse.codePostal || cabinet.adresse.ville ? `<p>${e(cabinet.adresse.codePostal)} ${e(cabinet.adresse.ville)}</p>` : ''}
+      ${cabinet.telephone ? `<p>${e(cabinet.telephone)}</p>` : ''}
+      ${cabinet.courriel ? `<p>${e(cabinet.courriel)}</p>` : ''}
     </div>
   </div>
 </div>
@@ -760,17 +777,17 @@ export function construireHtml(
 ${corpsSections}
 
 <div class="coordonnees">
-  <div class="nom">${CABINET.nom}</div>
-  <p>${CABINET.adresse}</p>
-  <p>${CABINET.ville}</p>
-  <p>${CABINET.telephone}</p>
-  <p>${CABINET.courriel}</p>
-  <p>${CABINET.site}</p>
-  <div class="mention">
-    Le présent dossier prévisionnel a été établi à partir des hypothèses communiquées par le client.<br>
-    Ces projections sont estimatives et reposent sur des hypothèses raisonnables à la date de leur établissement ;<br>
-    elles ne constituent ni une garantie de résultat, ni un engagement du cabinet.
-  </div>
+  ${cartoucheLogo(cabinet.logo)}
+  <div class="nom">${e(cabinet.nom)}</div>
+  ${cabinet.qualite ? `<div class="qualite">${e(cabinet.qualite)}</div>` : ''}
+  ${cabinet.adresse.voie ? `<p>${e(cabinet.adresse.voie)}</p>` : ''}
+  ${cabinet.adresse.complement ? `<p>${e(cabinet.adresse.complement)}</p>` : ''}
+  ${cabinet.adresse.codePostal || cabinet.adresse.ville ? `<p>${e(cabinet.adresse.codePostal)} ${e(cabinet.adresse.ville)}</p>` : ''}
+  ${cabinet.telephone ? `<p>${e(cabinet.telephone)}</p>` : ''}
+  ${cabinet.courriel ? `<p>${e(cabinet.courriel)}</p>` : ''}
+  ${cabinet.site ? `<p>${e(cabinet.site)}</p>` : ''}
+  ${mentionsLegales(cabinet)}
+  ${cabinet.mentionLegale ? `<div class="mention">${e(cabinet.mentionLegale)}</div>` : ''}
 </div>
 </body></html>`;
 }
@@ -797,7 +814,7 @@ function ligneCroissance(annees: readonly string[], croissance: readonly number[
  * Les styles doivent être en ligne : le gabarit est rendu dans un document isolé qui
  * n'hérite ni de la feuille de style du dossier, ni de son ajustement des couleurs.
  */
-export function construireEntete(dossier: Dossier, r: Resultats): string {
+export function construireEntete(dossier: Dossier, r: Resultats, cabinet = CABINET_PAR_DEFAUT): string {
   const identite = dossier.identite;
   const periode = formaterPeriode(
     r.exercices[0]?.dateDebut ?? '',
@@ -814,11 +831,28 @@ export function construireEntete(dossier: Dossier, r: Resultats): string {
   </div>`;
 }
 
+/**
+ * Mentions professionnelles du cabinet : forme juridique, capital, immatriculation,
+ * et inscription au tableau de l'Ordre — obligatoire sur un document d'expertise comptable.
+ */
+function mentionsLegales(cabinet: Cabinet): string {
+  const lignes = [
+    [cabinet.formeJuridique, cabinet.capital && `au capital de ${cabinet.capital}`]
+      .filter(Boolean)
+      .join(' '),
+    cabinet.siret && `SIRET ${cabinet.siret}`,
+    cabinet.numeroTva && `TVA ${cabinet.numeroTva}`,
+    cabinet.inscriptionOrdre,
+  ].filter(Boolean) as string[];
+  if (!lignes.length) return '';
+  return `<div class="legales">${lignes.map((l) => e(l)).join('<br>')}</div>`;
+}
+
 /** Gabarit de pied de page, avec la pagination fournie par Chromium. */
-export function construirePied(): string {
+export function construirePied(cabinet = CABINET_PAR_DEFAUT): string {
   return `<div style="width:100%;font-family:Helvetica,Arial,sans-serif;font-size:6.8pt;color:#5A6272;
               padding:0 14mm;display:flex;justify-content:space-between;align-items:center;">
-    <span>${CABINET.nom} — ${CABINET.adresse}, ${CABINET.ville} — ${CABINET.telephone}</span>
+    <span>${e([cabinet.nom, adresseSurUneLigne(cabinet), cabinet.telephone].filter(Boolean).join(' — '))}</span>
     <span>Document établi à partir des hypothèses communiquées par le client</span>
     <span>PAGE <span class="pageNumber"></span>/<span class="totalPages"></span></span>
   </div>`;

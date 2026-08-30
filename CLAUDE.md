@@ -31,11 +31,13 @@ affichent les mêmes chiffres.
 ### Où vit quoi
 
 ```
-core/src/model/          les cinq sections, l'identité, les paramètres
+core/src/model/          les cinq sections, l'identité, les paramètres,
+                         et l'identité du cabinet (cabinet.ts)
 core/src/engine/         immobilisations, emprunts, flux, fiscal, états,
                          contrôles, et index.ts qui orchestre le tout
 core/src/api/            contrat HTTP partagé et opérations atomiques
 server/src/depot.ts      persistance, versions, verrouillage optimiste
+server/src/cabinet.ts    identité du cabinet et contrôle des logos déposés
 server/src/pdf/          document HTML imprimé par Chromium
 mcp/src/outils.ts        les quinze outils exposés à l'assistant
 web/src/store/dossier.ts état, recalcul, enregistrement différé, synchronisation
@@ -76,6 +78,18 @@ cette performance ; les défaire coûterait immédiatement un facteur deux :
 plafond de cinq millisecondes par calcul sur un dossier de deux cents lignes.
 Ne jamais remettre de validation dans `calculer()` : ajouter plutôt la frontière
 manquante.
+
+### Le logo n'est pas une donnée du dossier
+
+Le logo du client vit dans sa propre colonne de la table `dossiers`, jamais dans le
+JSON versionné, et celui du cabinet dans la table `cabinet`. Deux raisons : restaurer
+une version antérieure ne doit pas faire disparaître un logo, et l'archiver à chaque
+écriture recopierait la même image dans tout l'historique. Un logo déposé est vérifié
+sur ses octets, pas sur le type déclaré ; le SVG est refusé — c'est un document XML,
+pas une image inerte.
+
+Rien de l'identité du cabinet n'est écrit en dur : `CABINET_PAR_DEFAUT` ne sert qu'au
+premier démarrage, tout le reste vient de l'écran Administration.
 
 ## Conventions
 

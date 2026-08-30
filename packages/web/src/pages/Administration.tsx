@@ -5,6 +5,7 @@ import { api } from '../api/client.js';
 import { useSession } from '../store/session.js';
 import { ChampNombre, ChampTexte, Selecteur } from '../ui/champs.js';
 import { Bandeau, Chargement, Confirmation, Modale } from '../ui/divers.js';
+import { CarteCabinet } from './CarteCabinet.js';
 
 /** Gestion des comptes du cabinet et des jetons d'API du serveur MCP. */
 export function Administration() {
@@ -54,6 +55,8 @@ export function Administration() {
 
       <div style={{ maxWidth: 980, margin: '0 auto', padding: 20 }} className="pile">
         {erreur ? <Bandeau ton="erreur">{erreur}</Bandeau> : null}
+
+        <CarteCabinet />
 
         <section className="carte">
           <header>

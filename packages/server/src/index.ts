@@ -6,6 +6,7 @@ import { sep } from 'node:path';
 import Fastify from 'fastify';
 import { ServiceAuthentification } from './auth.js';
 import { journaliser, ouvrirBase, purgerSessions, type BaseDonnees } from './base.js';
+import { ServiceCabinet } from './cabinet.js';
 import { chargerConfiguration, type Configuration } from './config.js';
 import { DepotSqlite } from './depot.js';
 import { monterMcpHttp } from './mcpHttp.js';
@@ -17,6 +18,7 @@ export interface Application {
   base: BaseDonnees;
   auth: ServiceAuthentification;
   depot: DepotSqlite;
+  cabinet: ServiceCabinet;
 }
 
 /** Construit l'application Fastify complète, sans l'écouter : utile aussi pour les essais. */
@@ -24,6 +26,7 @@ export async function construireApplication(config: Configuration): Promise<Appl
   const base = ouvrirBase(config.cheminBase);
   const auth = new ServiceAuthentification(base);
   const depot = new DepotSqlite(base);
+  const cabinet = new ServiceCabinet(base);
 
   const app = Fastify({
     logger: { level: config.niveauJournal },
@@ -37,7 +40,7 @@ export async function construireApplication(config: Configuration): Promise<Appl
   // le double : la compression divise ces échanges par dix sur une liaison lente.
   await app.register(compression, { global: true, threshold: 1024, encodings: ['br', 'gzip', 'deflate'] });
   await app.register(cookie, { secret: config.secretSession });
-  enregistrerRoutes(app, { base, auth, depot, config });
+  enregistrerRoutes(app, { base, auth, depot, cabinet, config });
 
   if (config.mcpHttpActif) await monterMcpHttp(app, { auth, depot });
 
@@ -74,7 +77,7 @@ export async function construireApplication(config: Configuration): Promise<Appl
     base.close();
   });
 
-  return { app, base, auth, depot };
+  return { app, base, auth, depot, cabinet };
 }
 
 /**

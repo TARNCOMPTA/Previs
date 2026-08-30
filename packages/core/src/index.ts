@@ -1,6 +1,7 @@
 // ─── Modèle de données ────────────────────────────────────────────────────────
 export * from './model/common.js';
 export * from './model/identite.js';
+export * from './model/cabinet.js';
 export * from './model/parametres.js';
 export * from './model/investissements.js';
 export * from './model/financements.js';

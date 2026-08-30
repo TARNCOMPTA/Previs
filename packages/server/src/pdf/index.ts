@@ -1,7 +1,8 @@
 import type { Browser } from 'playwright-core';
 import { chromium } from 'playwright-core';
 import type { Dossier, Resultats } from '@previs/core';
-import { construireEntete, construireHtml, construirePied } from './document.js';
+import { CABINET_PAR_DEFAUT } from '@previs/core';
+import { construireEntete, construireHtml, construirePied, type OptionsDocument } from './document.js';
 
 let navigateur: Browser | null = null;
 let ouvertureEnCours: Promise<Browser> | null = null;
@@ -70,8 +71,9 @@ export async function fermerNavigateur(): Promise<void> {
 export async function genererPdf(
   dossier: Dossier,
   resultats: Resultats,
-  options: { titre?: string } = {},
+  options: OptionsDocument = {},
 ): Promise<Uint8Array> {
+  const cabinet = options.cabinet ?? CABINET_PAR_DEFAUT;
   const html = construireHtml(dossier, resultats, options);
   const b = await obtenirNavigateur();
   // Le document est entièrement statique : couper JavaScript retire au rendu tout
@@ -87,8 +89,8 @@ export async function genererPdf(
       printBackground: true,
       preferCSSPageSize: true,
       displayHeaderFooter: true,
-      headerTemplate: construireEntete(dossier, resultats),
-      footerTemplate: construirePied(),
+      headerTemplate: construireEntete(dossier, resultats, cabinet),
+      footerTemplate: construirePied(cabinet),
     });
   } finally {
     await contexte.close();
@@ -96,3 +98,4 @@ export async function genererPdf(
 }
 
 export { construireEntete, construireHtml, construirePied };
+export type { OptionsDocument };

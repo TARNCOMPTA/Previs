@@ -141,6 +141,29 @@ erreur, sauf mention explicite du contraire.
 
 ---
 
+## Identité du cabinet et logos
+
+L'écran **Administration → Identité du cabinet** porte tout ce qui s'imprime sur les
+dossiers remis : raison sociale, qualité, expert-comptable signataire, forme juridique,
+capital, SIRET, TVA intracommunautaire, inscription au tableau de l'Ordre, adresse,
+téléphone, courriel, site, logo, et l'avertissement de fin de dossier. Rien n'est figé
+dans le code : le logiciel peut servir un autre cabinet sans être recompilé.
+
+Chaque dossier porte en plus le **logo de son client**, déposé depuis
+« Autres → Identité et introduction ». Il figure sur la page de garde, en regard de
+celui du cabinet.
+
+Les deux logos suivent les mêmes règles : PNG, JPEG ou WebP — le SVG est refusé, c'est
+un document XML et non une image inerte ; le contenu du fichier est vérifié sur ses
+octets et non sur le type déclaré ; l'image est réduite dans le navigateur avant l'envoi
+et plafonnée à 512 Ko. Elle voyage en URI de données, jamais par une URL : le PDF est
+produit dans un Chromium coupé du réseau et la politique de contenu de l'interface
+n'autorise aucune image distante.
+
+Le logo d'un client n'entre pas dans le contenu versionné du dossier : restaurer une
+version antérieure ne le fait pas disparaître, et l'historique ne recopie pas la même
+image à chaque écriture. Une duplication de dossier, elle, le reprend.
+
 ## Sécurité
 
 Le logiciel héberge les dossiers de clients réels du cabinet. Les protections sont

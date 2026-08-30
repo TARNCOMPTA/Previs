@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { zCabinet, zLogoFacultatif } from '../model/cabinet.js';
 import { zDossier, type Dossier } from '../model/dossier.js';
 import { zLigneCharge, zLignePersonnel } from '../model/charges.js';
 import { zApport, zCreditBail, zEmprunt, zSubvention } from '../model/financements.js';
@@ -37,12 +38,28 @@ export interface ResumeDossier {
   modifiePar: string;
   /** Faux si le dernier calcul enregistré présentait un contrôle en erreur. */
   coherent: boolean;
+  /** Logo du client, en URI de données. Chaîne vide si aucun n'a été déposé. */
+  logo: string;
 }
 
 /** Dossier complet tel que renvoyé par l'API. */
 export interface DossierEnregistre extends ResumeDossier {
   dossier: Dossier;
 }
+
+/**
+ * Requête de dépôt d'un logo, pour un dossier client ou pour le cabinet.
+ *
+ * Le logo est une pièce de présentation, pas une donnée financière : il vit à côté
+ * du dossier et non dans son contenu versionné. Restaurer une version antérieure ne
+ * doit pas faire disparaître le logo du client, et l'archiver à chaque écriture
+ * multiplierait la même image dans tout l'historique.
+ */
+export const zRequeteLogo = z.object({
+  logo: zLogoFacultatif,
+});
+
+export const zRequeteCabinet = zCabinet.partial();
 
 export interface ResumeVersion {
   version: number;

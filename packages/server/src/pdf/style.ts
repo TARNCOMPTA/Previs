@@ -79,8 +79,25 @@ body {
   margin: 0 0 2.5mm;
   font-weight: normal;
 }
-.couverture .blocs p { margin: 0 0 1mm; }
+.couverture .blocs p { margin: 0 0 1mm; text-align: left; }
 .couverture .blocs .nom { font-size: 12pt; font-weight: bold; margin-bottom: 2mm; }
+
+/* Un logo est dessiné pour un fond blanc : sur le bleu de la charte, il est posé
+   sur un cartouche clair plutôt que détouré au jugé. */
+.cartouche-logo {
+  display: inline-block;
+  background: #fff;
+  border-radius: 2mm;
+  padding: 3mm 4mm;
+  line-height: 0;
+}
+.cartouche-logo img { display: block; }
+ /* La couverture est une colonne flex : sans cela le cartouche s'étirerait
+     sur toute la largeur au lieu d'épouser le logo. */
+.couverture .logo-cabinet { margin-bottom: 12mm; align-self: flex-start; }
+.couverture .logo-cabinet img { max-height: 20mm; max-width: 70mm; }
+.couverture .blocs .cartouche-logo { margin-bottom: 3mm; padding: 2mm 3mm; }
+.couverture .blocs .cartouche-logo img { max-height: 14mm; max-width: 45mm; }
 
 /* ─── Dernière page ────────────────────────────────────────────────────────── */
 
@@ -96,8 +113,12 @@ body {
   text-align: center;
 }
 .coordonnees .nom { font-size: 24pt; font-weight: bold; letter-spacing: 2px; margin-bottom: 8mm; }
-.coordonnees p { margin: 0 0 2mm; font-size: 11pt; }
-.coordonnees .mention { margin-top: 16mm; font-size: 8.5pt; opacity: 0.75; line-height: 1.6; }
+.coordonnees p { margin: 0 0 2mm; font-size: 11pt; text-align: center; }
+.coordonnees .cartouche-logo { margin-bottom: 10mm; }
+.coordonnees .cartouche-logo img { max-height: 24mm; max-width: 80mm; }
+.coordonnees .qualite { font-size: 10pt; opacity: 0.82; margin-bottom: 6mm; }
+.coordonnees .legales { margin-top: 10mm; font-size: 9pt; opacity: 0.78; line-height: 1.7; }
+.coordonnees .mention { margin-top: 12mm; font-size: 8.5pt; opacity: 0.75; line-height: 1.6; }
 
 /* ─── Sections ─────────────────────────────────────────────────────────────── */
 

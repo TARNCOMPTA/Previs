@@ -108,6 +108,12 @@ function migrer(base: BaseDonnees): void {
       PRIMARY KEY (dossier_id, version)
     );
 
+    CREATE TABLE IF NOT EXISTS cabinet (
+      id        INTEGER PRIMARY KEY CHECK (id = 1),
+      contenu   TEXT NOT NULL,
+      modifie_le TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS journal_audit (
       id             INTEGER PRIMARY KEY AUTOINCREMENT,
       horodatage     TEXT NOT NULL,
@@ -119,6 +125,25 @@ function migrer(base: BaseDonnees): void {
     );
     CREATE INDEX IF NOT EXISTS idx_audit_horodatage ON journal_audit(horodatage);
   `);
+
+  ajouterColonne(base, 'dossiers', 'logo', "TEXT NOT NULL DEFAULT ''");
+}
+
+/**
+ * Ajoute une colonne si elle manque.
+ *
+ * SQLite ne connaît pas `ADD COLUMN IF NOT EXISTS` : on interroge le schéma plutôt
+ * que d'avaler l'erreur, pour qu'un vrai échec de migration reste visible.
+ */
+function ajouterColonne(
+  base: BaseDonnees,
+  table: string,
+  colonne: string,
+  definition: string,
+): void {
+  const colonnes = base.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  if (colonnes.some((c) => c.name === colonne)) return;
+  base.exec(`ALTER TABLE ${table} ADD COLUMN ${colonne} ${definition}`);
 }
 
 /** Consigne une action dans le journal d'audit. */

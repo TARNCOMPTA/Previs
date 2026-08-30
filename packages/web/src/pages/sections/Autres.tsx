@@ -21,6 +21,8 @@ import {
 } from '../../ui/champs.js';
 import { Bandeau, RepartitionMensuelle } from '../../ui/divers.js';
 import { GrilleLignes, type Colonne } from '../../ui/grille.js';
+import { useDossier } from '../../store/dossier.js';
+import { ChampLogo } from '../../ui/logo.js';
 import { AvecDossier, BlocGrille, EnTeteSection } from './commun.js';
 
 type Onglet = 'hypotheses' | 'identite' | 'divers';
@@ -28,6 +30,10 @@ type Onglet = 'hypotheses' | 'identite' | 'divers';
 /** Section « Autres » : hypothèses, identité et introduction, éléments divers. */
 export default function Autres() {
   const [onglet, setOnglet] = useState<Onglet>('hypotheses');
+  // Le logo ne fait pas partie du contenu versionné : il est lu et posé hors du
+  // contexte de section, qui ne porte que le dossier lui-même.
+  const fiche = useDossier((e) => e.fiche);
+  const definirLogo = useDossier((e) => e.definirLogo);
 
   return (
     <AvecDossier
@@ -331,6 +337,14 @@ export default function Autres() {
             {onglet === 'identite' ? (
               <>
                 <BlocGrille titre="Identité du client">
+                  <div className="pile">
+                    <ChampLogo
+                      libelle="Logo du client"
+                      aide="Repris sur la page de garde du dossier remis. PNG, JPEG ou WebP."
+                      logo={fiche?.logo ?? ''}
+                      onChange={(logo) => void definirLogo(logo)}
+                    />
+                  </div>
                   <div className="grille-champs">
                     <ChampTexte
                       libelle="Raison sociale"

@@ -4,7 +4,9 @@ import {
   zRequeteConnexion,
   zRequeteCreation,
   zRequeteEnregistrement,
+  zRequeteCabinet,
   zRequeteJeton,
+  zRequeteLogo,
   zRequetePatch,
   zRequeteUtilisateur,
   type JetonApi,
@@ -15,6 +17,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { auteurDe, exiger, identifier, NOM_COOKIE, type ServiceAuthentification } from './auth.js';
 import { journaliser, type BaseDonnees } from './base.js';
+import { verifierLogo, type ServiceCabinet } from './cabinet.js';
 import type { DepotSqlite } from './depot.js';
 import type { Configuration } from './config.js';
 import {
@@ -29,6 +32,7 @@ interface Contexte {
   base: BaseDonnees;
   auth: ServiceAuthentification;
   depot: DepotSqlite;
+  cabinet: ServiceCabinet;
   config: Configuration;
 }
 
@@ -394,6 +398,56 @@ export function enregistrerRoutes(app: FastifyInstance, ctx: Contexte): void {
         .header('content-type', 'application/pdf')
         .header('content-disposition', `attachment; filename="${nomFichier}"`)
         .send(Buffer.from(pdf));
+    } catch (erreur) {
+      return repondreErreur(erreur, reponse, ctx.config.production);
+    }
+  });
+
+  // ─── Identité du cabinet ────────────────────────────────────────────────────
+  // Lecture ouverte à tout compte : l'interface l'affiche et le PDF s'en sert.
+  // L'écriture reste réservée aux administrateurs.
+  app.get('/api/cabinet', async (requete, reponse) => {
+    const identite = identifier(ctx.auth, requete);
+    if (!exiger(identite, reponse)) return;
+    return ctx.cabinet.lire();
+  });
+
+  app.put('/api/cabinet', async (requete, reponse) => {
+    const identite = identifier(ctx.auth, requete);
+    if (!exiger(identite, reponse, { admin: true })) return;
+    try {
+      const modifications = zRequeteCabinet.parse(requete.body);
+      if (modifications.logo !== undefined) {
+        const controle = verifierLogo(modifications.logo);
+        if (!controle.ok) {
+          return reponse.code(422).send({ erreur: controle.raison, code: 'donnees_invalides' });
+        }
+      }
+      const cabinet = ctx.cabinet.enregistrer(modifications);
+      journaliser(ctx.base, {
+        utilisateur: identite.utilisateur.nom,
+        origine: 'interface',
+        action: 'modification_cabinet',
+        detail: Object.keys(modifications).join(', '),
+      });
+      return cabinet;
+    } catch (erreur) {
+      return repondreErreur(erreur, reponse, ctx.config.production);
+    }
+  });
+
+  // ─── Logo d'un dossier client ───────────────────────────────────────────────
+  app.put('/api/dossiers/:id/logo', async (requete, reponse) => {
+    const identite = identifier(ctx.auth, requete);
+    if (!exiger(identite, reponse, { ecriture: true })) return;
+    try {
+      const { id } = requete.params as { id: string };
+      const { logo } = zRequeteLogo.parse(requete.body);
+      const controle = verifierLogo(logo);
+      if (!controle.ok) {
+        return reponse.code(422).send({ erreur: controle.raison, code: 'donnees_invalides' });
+      }
+      return await ctx.depot.definirLogo(id, logo);
     } catch (erreur) {
       return repondreErreur(erreur, reponse, ctx.config.production);
     }

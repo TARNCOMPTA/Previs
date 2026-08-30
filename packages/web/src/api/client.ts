@@ -1,4 +1,5 @@
 import type {
+  Cabinet,
   DossierEnregistre,
   ErreurApi,
   JetonApi,
@@ -94,6 +95,13 @@ export const api = {
   dupliquerDossier: (id: string) =>
     appeler<DossierEnregistre>(`/api/dossiers/${id}/dupliquer`, { methode: 'POST' }),
   versions: (id: string) => appeler<ResumeVersion[]>(`/api/dossiers/${id}/versions`),
+  definirLogoDossier: (id: string, logo: string) =>
+    appeler<DossierEnregistre>(`/api/dossiers/${id}/logo`, { methode: 'PUT', corps: { logo } }),
+
+  // ─── Identité du cabinet ──────────────────────────────────────────────────
+  lireCabinet: () => appeler<Cabinet>('/api/cabinet'),
+  enregistrerCabinet: (modifications: Partial<Cabinet>) =>
+    appeler<Cabinet>('/api/cabinet', { methode: 'PUT', corps: modifications }),
   restaurerVersion: (id: string, version: number) =>
     appeler<DossierEnregistre>(`/api/dossiers/${id}/versions/${version}/restaurer`, { methode: 'POST' }),
 

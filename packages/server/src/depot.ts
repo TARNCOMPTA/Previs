@@ -19,6 +19,7 @@ import {
   type ResumeVersion,
 } from '@previs/core';
 import { journaliser, type BaseDonnees } from './base.js';
+import { ServiceCabinet } from './cabinet.js';
 import { genererPdf } from './pdf/index.js';
 import { nouvelIdentifiant } from './securite.js';
 
@@ -37,7 +38,7 @@ const FENETRE_REGROUPEMENT_MS = 10 * 60 * 1000;
 /** Colonnes de la fiche résumé, sans le contenu du dossier. */
 const COLONNES_RESUME =
   'id, nom, version, client, regime, type_dossier, nb_exercices, annee_debut, ' +
-  'ca_premier_exercice, coherent, cree_le, modifie_le, modifie_par';
+  'ca_premier_exercice, coherent, cree_le, modifie_le, modifie_par, logo';
 
 interface LigneResume {
   id: string;
@@ -53,6 +54,7 @@ interface LigneResume {
   cree_le: string;
   modifie_le: string;
   modifie_par: string;
+  logo: string | null;
 }
 
 interface LigneDossier extends LigneResume {
@@ -74,6 +76,7 @@ function versResume(ligne: LigneResume): ResumeDossier {
     modifieLe: ligne.modifie_le,
     modifiePar: ligne.modifie_par,
     coherent: ligne.coherent === 1,
+    logo: ligne.logo ?? '',
   };
 }
 
@@ -120,7 +123,15 @@ function indicateurs(dossier: Dossier): {
 
 /** Accès aux dossiers sur la base SQLite du serveur. */
 export class DepotSqlite implements DepotDossiers {
-  constructor(private readonly base: BaseDonnees) {}
+  /**
+   * Le dépôt tient sa propre vue de l'identité du cabinet : c'est lui qui produit
+   * le PDF, et le PDF ne doit plus rien porter d'écrit en dur.
+   */
+  private readonly cabinet: ServiceCabinet;
+
+  constructor(private readonly base: BaseDonnees) {
+    this.cabinet = new ServiceCabinet(base);
+  }
 
   async lister(): Promise<ResumeDossier[]> {
     // Le contenu des dossiers n'est pas lu : sur un cabinet de deux cents dossiers,
@@ -213,6 +224,25 @@ export class DepotSqlite implements DepotDossiers {
     return { dossier: enregistre, journal, erreurs };
   }
 
+  /**
+   * Dépose ou retire le logo d'un dossier.
+   *
+   * Le logo vit dans sa propre colonne, jamais dans le contenu versionné : il survit
+   * donc à toutes les écritures de l'assistant comme du clavier, et la restauration
+   * d'une version antérieure ne le fait pas disparaître.
+   */
+  async definirLogo(id: string, logo: string): Promise<DossierEnregistre> {
+    const ligne = this.lireOuEchouer(id);
+    this.base.prepare('UPDATE dossiers SET logo = ? WHERE id = ?').run(logo, ligne.id);
+    journaliser(this.base, {
+      utilisateur: '',
+      origine: 'interface',
+      action: logo ? 'depot_logo' : 'retrait_logo',
+      cible: id,
+    });
+    return versEnregistre(this.lireOuEchouer(id));
+  }
+
   async supprimer(id: string): Promise<void> {
     const ligne = this.lireOuEchouer(id);
     this.base.prepare('DELETE FROM dossiers WHERE id = ?').run(id);
@@ -228,7 +258,10 @@ export class DepotSqlite implements DepotDossiers {
   async dupliquer(id: string, auteur: Auteur): Promise<DossierEnregistre> {
     const ligne = this.lireOuEchouer(id);
     const dossier = JSON.parse(ligne.contenu) as Dossier;
-    return this.creer({ nom: `${ligne.nom} (copie)`, dossier, modele: 'vide' }, auteur);
+    const copie = await this.creer({ nom: `${ligne.nom} (copie)`, dossier, modele: 'vide' }, auteur);
+    // Le logo n'est pas dans le contenu : la copie le reprend explicitement.
+    if (ligne.logo) return this.definirLogo(copie.id, ligne.logo);
+    return copie;
   }
 
   async versions(id: string): Promise<ResumeVersion[]> {
@@ -287,7 +320,11 @@ export class DepotSqlite implements DepotDossiers {
     const enregistre = await this.lire(id);
     if (!enregistre) throw new ErreurDepot('introuvable', 'Dossier introuvable.');
     const resultats = calculer(enregistre.dossier);
-    return genererPdf(enregistre.dossier, resultats, { titre: enregistre.nom });
+    return genererPdf(enregistre.dossier, resultats, {
+      titre: enregistre.nom,
+      cabinet: this.cabinet.lire(),
+      logoClient: enregistre.logo,
+    });
   }
 
   // ─── Écriture ───────────────────────────────────────────────────────────────
