@@ -32,9 +32,11 @@ export async function monterMcpHttp(
         .send({ erreur: 'Ce jeton n’autorise que la lecture.', code: 'interdit' });
     }
 
+    // Le nom porte à la fois l'assistant et le titulaire du jeton : l'interface et
+    // l'historique montrent ainsi qui a écrit, et par quel canal.
     const serveur = creerServeurMcp(ctx.depot, {
       id: utilisateur.id,
-      nom: utilisateur.nom,
+      nom: `Assistant · ${utilisateur.nom}`,
       origine: 'mcp',
     });
 
