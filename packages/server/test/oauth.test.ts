@@ -415,6 +415,52 @@ describe('révocation depuis l’écran Administration', () => {
     expect(application.oauth.parJetonAcces(jeton)).toBeNull();
   });
 
+  /*
+   * Le trou que l'audit a relevé : entre le consentement et l'échange du code, aucun jeton
+   * n'existe. La liste ne montrait donc RIEN, et la révocation n'atteignait pas le code.
+   * L'expert-comptable qui vient d'approuver un connecteur par erreur ouvre cet écran, et
+   * c'est exactement l'instant où il doit y trouver quelque chose à révoquer.
+   */
+  it('un consentement dont le jeton n’est pas encore retiré apparaît déjà', async () => {
+    const { defi } = pkce();
+    await obtenirCode({ defi });
+    const cookie = await cookieAdmin();
+
+    const liste = (
+      await app.inject({ method: 'GET', url: '/api/oauth/autorisations', headers: { cookie } })
+    ).json() as Array<Record<string, unknown>>;
+    const attente = liste.find((a) => a.clientId === clientId && a.enAttente === true);
+    expect(attente, 'le consentement en attente doit être listé').toBeTruthy();
+    expect(attente!.courriel).toBe('collab@tarncompta.fr');
+    expect(attente!.nomClient).toBe('Claude');
+  });
+
+  it('et sa révocation empêche l’échange du code', async () => {
+    const { verificateur, defi } = pkce();
+    const code = parametresDe((await obtenirCode({ defi })).localisation).get('code')!;
+    const cookie = await cookieAdmin();
+
+    const liste = (
+      await app.inject({ method: 'GET', url: '/api/oauth/autorisations', headers: { cookie } })
+    ).json() as Array<Record<string, string>>;
+    const attente = liste.find((a) => a.clientId === clientId)!;
+
+    const revocation = await app.inject({
+      method: 'DELETE',
+      url: `/api/oauth/autorisations/${attente.utilisateurId}/${clientId}`,
+      headers: { cookie, origin: ORIGINE },
+    });
+    expect(revocation.statusCode).toBe(200);
+
+    // La conséquence d'abord, le décompte ensuite : sans le comptage des codes, cet
+    // échange rendait un couple de jetons neuf pour trente jours, dans les dix minutes
+    // qui suivaient la révocation.
+    const echange = await echangerCode({ code, verificateur });
+    expect(echange.statusCode).toBe(400);
+    expect(echange.json().error).toBe('invalid_grant');
+    expect(revocation.json().revoques).toBeGreaterThan(0);
+  });
+
   it('la liste des autorisations est réservée aux administrateurs', async () => {
     const r = await app.inject({ method: 'GET', url: '/api/oauth/autorisations' });
     expect(r.statusCode).toBe(401);

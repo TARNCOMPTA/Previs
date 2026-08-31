@@ -808,7 +808,8 @@ export function enregistrerRoutes(app: FastifyInstance, ctx: Contexte): void {
       origine: 'interface',
       action: 'revocation_autorisation',
       cible: clientId,
-      detail: `${revoques} jeton(s)`,
+      // Le compte porte les jetons ET les codes non échangés : l'un et l'autre valent accès.
+      detail: `${revoques} accès révoqué(s)`,
     });
     return { revoques };
   });

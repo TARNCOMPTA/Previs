@@ -217,8 +217,9 @@ export function Administration() {
               <h2>Connecteurs autorisés</h2>
               <div className="discret">
                 Une autorisation accordée depuis Claude — application ou site — vaut jusqu’à sa
-                révocation. La révoquer coupe l’accès immédiatement ; le connecteur redemandera le
-                consentement à sa prochaine connexion.
+                révocation. La révoquer coupe l’accès immédiatement, y compris le consentement dont
+                le jeton n’a pas encore été retiré ; le connecteur redemandera le consentement à sa
+                prochaine connexion.
               </div>
             </div>
           </header>
@@ -247,7 +248,16 @@ export function Administration() {
                         <div className="discret">{a.courriel}</div>
                       </td>
                       <td>{new Date(a.accordeeLe).toLocaleString('fr-FR')}</td>
-                      <td>{new Date(a.expireLe).toLocaleDateString('fr-FR')}</td>
+                      <td>
+                        {a.enAttente ? (
+                          // Un consentement tout juste accordé : le connecteur n'a pas encore
+                          // échangé son code. C'est le moment où l'on révoque une approbation
+                          // donnée par erreur, et il ne durera que quelques secondes.
+                          <span className="discret">Jeton pas encore retiré</span>
+                        ) : (
+                          new Date(a.expireLe).toLocaleDateString('fr-FR')
+                        )}
+                      </td>
                       <td>
                         <button
                           className="bouton discret petit danger"

@@ -436,14 +436,37 @@ export class ServiceOauth {
       .run(maintenant, utilisateurId).changes;
   }
 
-  /** Révoque tout ce qui a été émis à un compte pour un client donné. */
+  /**
+   * Révoque tout ce qui a été émis à un compte pour un client donné.
+   *
+   * Les codes en attente comptent autant que les jetons, exactement comme dans
+   * `revoquerPourUtilisateur`. Un code accordé mais pas encore échangé vaut un couple de
+   * jetons neuf pour trente jours, et il vit dix minutes : la révocation depuis l'écran
+   * Administration laissait donc l'accès se rouvrir dans les dix minutes qui la suivaient
+   * — précisément la minute où l'on révoque un consentement accordé par erreur.
+   *
+   * Marquer le code « consommé » ne distingue pas la révocation d'une vraie consommation :
+   * s'il est présenté ensuite, il est traité en rejeu, et la lignée déjà révoquée l'est une
+   * seconde fois. C'est le côté prudent de l'erreur, et c'est la convention du fichier.
+   */
   revoquerPourClient(utilisateurId: string, clientId: string): number {
-    return this.base
+    const maintenant = new Date().toISOString();
+
+    const codes = this.base
+      .prepare(
+        `UPDATE oauth_codes SET consomme_le = ?
+         WHERE utilisateur_id = ? AND client_id = ? AND consomme_le IS NULL`,
+      )
+      .run(maintenant, utilisateurId, clientId).changes;
+
+    const jetons = this.base
       .prepare(
         `UPDATE oauth_jetons SET revoque_le = ?
          WHERE utilisateur_id = ? AND client_id = ? AND revoque_le IS NULL`,
       )
-      .run(new Date().toISOString(), utilisateurId, clientId).changes;
+      .run(maintenant, utilisateurId, clientId).changes;
+
+    return codes + jetons;
   }
 
   /**
@@ -452,20 +475,28 @@ export class ServiceOauth {
    * Une ligne par couple compte-client : c'est l'unité qu'on révoque. La date retenue
    * est celle du premier jeton encore valable, soit le moment du consentement ou du
    * dernier rafraîchissement.
+   *
+   * Les codes non encore échangés y figurent aussi, et c'est là l'essentiel : un
+   * consentement venait d'être accordé, aucun jeton n'existait encore, et la ligne
+   * n'apparaissait donc nulle part. L'expert-comptable qui venait d'approuver un
+   * connecteur par erreur ouvrait cet écran, n'y voyait rien à révoquer, et le connecteur
+   * échangeait son code dans les dix minutes — trente jours d'accès aux dossiers réels.
+   * Le consentement est maintenant visible dès l'instant où il est donné.
    */
   listerToutes(): AutorisationOauth[] {
+    const maintenant = new Date().toISOString();
     return this.base
       .prepare(
-        `SELECT j.utilisateur_id, u.nom AS compte, u.email AS courriel, j.client_id,
-                c.nom AS nom_client, MIN(j.cree_le) AS accordee_le, MAX(j.expire_le) AS expire_le
-         FROM oauth_jetons j
-         JOIN utilisateurs u ON u.id = j.utilisateur_id
-         LEFT JOIN oauth_clients c ON c.client_id = j.client_id
-         WHERE j.revoque_le IS NULL AND j.expire_le > ?
-         GROUP BY j.utilisateur_id, j.client_id
+        `SELECT g.utilisateur_id, u.nom AS compte, u.email AS courriel, g.client_id,
+                c.nom AS nom_client, MIN(g.cree_le) AS accordee_le, MAX(g.expire_le) AS expire_le,
+                MAX(g.en_attente) AS en_attente
+         FROM (${ACCES_EN_COURS}) g
+         JOIN utilisateurs u ON u.id = g.utilisateur_id
+         LEFT JOIN oauth_clients c ON c.client_id = g.client_id
+         GROUP BY g.utilisateur_id, g.client_id
          ORDER BY accordee_le DESC`,
       )
-      .all(new Date().toISOString())
+      .all(maintenant, maintenant)
       .map((l) => {
         const r = l as {
           utilisateur_id: string;
@@ -475,6 +506,7 @@ export class ServiceOauth {
           nom_client: string | null;
           accordee_le: string;
           expire_le: string;
+          en_attente: number;
         };
         return {
           utilisateurId: r.utilisateur_id,
@@ -484,32 +516,26 @@ export class ServiceOauth {
           nomClient: r.nom_client ?? '',
           accordeeLe: r.accordee_le,
           expireLe: r.expire_le,
+          enAttente: r.en_attente === 1,
         };
       });
   }
-
-  /** Autorisations en cours d'un compte, pour l'écran d'administration. */
-  listerAutorisations(utilisateurId: string): Array<{
-    clientId: string;
-    nom: string;
-    creeLe: string;
-    expireLe: string;
-  }> {
-    return this.base
-      .prepare(
-        `SELECT j.client_id, c.nom, MIN(j.cree_le) AS cree_le, MAX(j.expire_le) AS expire_le
-         FROM oauth_jetons j
-         LEFT JOIN oauth_clients c ON c.client_id = j.client_id
-         WHERE j.utilisateur_id = ? AND j.revoque_le IS NULL AND j.expire_le > ?
-         GROUP BY j.client_id`,
-      )
-      .all(utilisateurId, new Date().toISOString())
-      .map((l) => {
-        const r = l as { client_id: string; nom: string | null; cree_le: string; expire_le: string };
-        return { clientId: r.client_id, nom: r.nom ?? '', creeLe: r.cree_le, expireLe: r.expire_le };
-      });
-  }
 }
+
+/**
+ * Ce qui vaut accès à un dossier : un jeton en cours, ou un code pas encore échangé.
+ *
+ * Les deux tables sont réunies plutôt que consultées l'une après l'autre, pour que
+ * l'écran Administration ne puisse pas montrer une moitié de la vérité. Le drapeau
+ * « en_attente » distingue le consentement dont le jeton reste à venir.
+ */
+const ACCES_EN_COURS = `
+  SELECT utilisateur_id, client_id, cree_le, expire_le, 0 AS en_attente
+    FROM oauth_jetons WHERE revoque_le IS NULL AND expire_le > ?
+  UNION ALL
+  SELECT utilisateur_id, client_id, cree_le, expire_le, 1 AS en_attente
+    FROM oauth_codes WHERE consomme_le IS NULL AND expire_le > ?
+`;
 
 /** Erreur portant un code d'erreur OAuth, restitué tel quel au client. */
 export class ErreurOauth extends Error {

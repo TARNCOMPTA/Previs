@@ -141,4 +141,12 @@ export interface AutorisationOauth {
   nomClient: string;
   accordeeLe: string;
   expireLe: string;
+  /**
+   * Vrai quand le consentement est donné mais qu'aucun jeton n'a encore été émis.
+   *
+   * L'état dure normalement une seconde ou deux — le temps de l'échange du code — et dix
+   * minutes au plus. Il est montré parce que c'est exactement le moment où l'on révoque un
+   * consentement accordé par erreur.
+   */
+  enAttente: boolean;
 }

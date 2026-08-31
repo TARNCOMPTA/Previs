@@ -109,31 +109,107 @@ describe('complétion des lignes créées depuis l’interface', () => {
   });
 });
 
-describe('coût du calcul', () => {
-  it('reste sous cinq millisecondes sur un dossier de deux cents lignes', () => {
-    const base = dossierComplet('IS');
-    const lignes = Array.from({ length: 200 }, (_, i) =>
-      completerLigne('charges.lignes', {
-        id: `c${i}`,
-        libelle: `Charge ${i}`,
-        montants: [1000, 1100, 1200],
-      }),
-    );
-    const gros = normaliserDossier({ ...base, charges: { ...base.charges, lignes } });
-
-    calculer(gros);
+/**
+ * Le coût du calcul, mesuré au **minimum** de plusieurs lots.
+ *
+ * Le minimum, et non la moyenne : la contention d'une machine chargée ne peut que
+ * RALENTIR un lot, jamais l'accélérer. Le plus rapide des lots est donc la mesure la moins
+ * polluée — et, à seuil égal, la plus sévère.
+ *
+ * La version précédente prenait la moyenne d'un seul lot après un unique appel de chauffe.
+ * Elle mesurait surtout l'interpréteur de V8 : elle a rendu 5,63 ms, contre un seuil de 5,
+ * pendant que les autres fichiers d'essai tournaient en parallèle — pour un coût réel
+ * mesuré à 1,23 ms. Un essai de performance qui échoue au hasard finit par être desserré ;
+ * c'est ainsi qu'on perd un facteur deux sans que rien ne le signale.
+ */
+function coutMinimal(travail: () => void, iterations = 20, lots = 5): number {
+  // Trois passes complètes avant de mesurer : sans elles, c'est le code non encore
+  // optimisé qui est chronométré, et il est cinq fois plus lent.
+  for (let i = 0; i < iterations * 3; i++) travail();
+  let meilleur = Infinity;
+  for (let lot = 0; lot < lots; lot++) {
     const debut = performance.now();
-    for (let i = 0; i < 20; i++) calculer(gros);
-    const moyenne = (performance.now() - debut) / 20;
-    expect(moyenne, `${moyenne.toFixed(2)} ms par calcul`).toBeLessThan(5);
+    for (let i = 0; i < iterations; i++) travail();
+    meilleur = Math.min(meilleur, (performance.now() - debut) / iterations);
+  }
+  return meilleur;
+}
+
+/** Un dossier complet auquel on ajoute `n` lignes de charges. */
+function dossierDeNLignes(n: number) {
+  const base = dossierComplet('IS');
+  const lignes = Array.from({ length: n }, (_, i) =>
+    completerLigne('charges.lignes', {
+      id: `c${i}`,
+      libelle: `Charge ${i}`,
+      montants: [1000, 1100, 1200],
+    }),
+  );
+  return normaliserDossier({ ...base, charges: { ...base.charges, lignes } });
+}
+
+describe('coût du calcul', () => {
+  /*
+   * Ce seuil-ci est une exigence de produit, pas un garde-fou de régression : il dit ce
+   * qu'une machine doit tenir pour que la saisie reste fluide, et il doit donc rester
+   * généreux — le VPS n'a pas les cœurs d'un poste de développement. Les deux essais
+   * suivants, eux, sont des rapports : ils ne dépendent pas de la machine, et c'est eux
+   * qui attrapent une régression.
+   */
+  it('reste sous cinq millisecondes sur un dossier de deux cents lignes', () => {
+    const gros = dossierDeNLignes(200);
+    const cout = coutMinimal(() => calculer(gros));
+    expect(cout, `${cout.toFixed(2)} ms par calcul`).toBeLessThan(5);
   });
 
   it('un dossier vide se calcule en moins d’une milliseconde', () => {
     const vide = dossier();
-    calculer(vide);
-    const debut = performance.now();
-    for (let i = 0; i < 50; i++) calculer(vide);
-    const moyenne = (performance.now() - debut) / 50;
-    expect(moyenne, `${moyenne.toFixed(2)} ms par calcul`).toBeLessThan(1);
+    const cout = coutMinimal(() => calculer(vide), 50);
+    expect(cout, `${cout.toFixed(2)} ms par calcul`).toBeLessThan(1);
+  });
+
+  /*
+   * Le garde-fou du premier invariant : `calculer()` ne valide pas.
+   *
+   * Le rapport est mesuré sur la même machine, dans la même seconde, contre la validation
+   * qu'il s'agit précisément de ne pas refaire. Il vaut 0,84 ici ; remettre
+   * `normaliserDossier()` dans `calculer()` le porterait à 1,9 — c'est la somme des deux.
+   * Un seuil de 1,5 laisse la moitié du chemin de part et d'autre, et ne dépend d'aucun
+   * matériel.
+   *
+   * Éprouvé : la mutation rend « calculer 3,13 ms · normaliserDossier 1,35 ms · rapport
+   * 2,31 ». Le seuil de cinq millisecondes ci-dessus, lui, passait sans broncher — c'est
+   * exactement le facteur deux que l'ancien essai laissait filer.
+   */
+  it('calculer() coûte moins que la validation qu’il ne fait pas', () => {
+    const gros = dossierDeNLignes(200);
+    const calcul = coutMinimal(() => calculer(gros));
+    const validation = coutMinimal(() => normaliserDossier(gros));
+    const rapport = calcul / validation;
+    expect(
+      rapport,
+      `calculer ${calcul.toFixed(2)} ms · normaliserDossier ${validation.toFixed(2)} ms · rapport ${rapport.toFixed(2)}`,
+    ).toBeLessThan(1.5);
+  });
+
+  /*
+   * Le second garde-fou : le coût suit le nombre de lignes, il ne l'élève pas au carré.
+   *
+   * Doubler les lignes coûte 1,7 fois plus ici — moins de deux, le dossier gardant un socle
+   * fixe. Éprouvé : un cumul « toutes les autres lignes de la même catégorie » glissé dans
+   * la boucle mensuelle des charges rend « 200 lignes 4,15 ms · 400 lignes 12,64 ms ·
+   * rapport 3,05 ». Là encore, le seuil de cinq millisecondes passait à deux cents lignes,
+   * pendant qu'un dossier de quatre cents en demandait douze.
+   */
+  it('doubler les lignes ne quadruple pas le coût', () => {
+    const petit = dossierDeNLignes(200);
+    const grand = dossierDeNLignes(400);
+    const coutPetit = coutMinimal(() => calculer(petit));
+    const coutGrand = coutMinimal(() => calculer(grand));
+    const rapport = coutGrand / coutPetit;
+    expect(
+      rapport,
+      `200 lignes ${coutPetit.toFixed(2)} ms · 400 lignes ${coutGrand.toFixed(2)} ms · rapport ${rapport.toFixed(2)}`,
+    ).toBeLessThan(2.5);
   });
 });

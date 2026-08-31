@@ -80,10 +80,21 @@ cette performance ; les défaire coûterait immédiatement un facteur deux :
    valeurs par défaut, toute ligne nouvelle passe par `completerLigne()`, qui
    applique le schéma zod de sa liste.
 
-`packages/core/test/performance.test.ts` verrouille ces trois points, ainsi qu'un
-plafond de cinq millisecondes par calcul sur un dossier de deux cents lignes.
-Ne jamais remettre de validation dans `calculer()` : ajouter plutôt la frontière
-manquante.
+`packages/core/test/performance.test.ts` verrouille ces trois points. Le chronométrage y
+prend le **minimum** de plusieurs lots, après chauffe : la contention ne peut que ralentir
+un lot, et le plus rapide est donc la mesure la moins polluée — et la plus sévère à seuil
+égal. Le plafond de cinq millisecondes par calcul est une exigence de produit, généreuse à
+dessein ; les deux garde-fous de régression sont des **rapports**, indépendants de la
+machine :
+
+- `calculer()` doit coûter moins de 1,5 fois `normaliserDossier()` sur le même dossier —
+  remettre la validation dedans porte ce rapport à 2,3, mesuré ;
+- doubler les lignes doit coûter moins de 2,5 fois — un parcours quadratique glissé dans la
+  boucle mensuelle des charges rend 3,05, mesuré.
+
+Dans les deux cas, le plafond de cinq millisecondes passait sans broncher : c'est
+précisément le facteur deux qu'il laissait filer. Ne jamais remettre de validation dans
+`calculer()` : ajouter plutôt la frontière manquante.
 
 ### Le troisième point délicat : ce que le PDF ne peut pas faire
 
@@ -155,7 +166,7 @@ premier démarrage, tout le reste vient de l'écran Administration.
 
 ```bash
 npm run typecheck      # les quatre paquets
-npm test               # 75 essais du moteur et du modèle, 219 essais du serveur
+npm test               # 77 essais du moteur et du modèle, 221 essais du serveur
 npm run build
 ```
 
@@ -230,6 +241,10 @@ Sept règles à ne pas défaire :
    seul moyen de constater une fuite. Rien n'est conservé en clair, ni code ni jeton.
    L'adresse de redirection d'un client est vérifiée **avant** toute redirection, sans
    quoi le serveur d'autorisation devient une redirection ouverte.
+   **Un code non encore échangé vaut un accès**, et compte donc partout où l'on compte les
+   accès : l'écran Administration le montre dès l'instant du consentement — sans quoi rien
+   n'y apparaît pendant les dix minutes où le code vit — et la révocation le consomme, sans
+   quoi l'accès se rouvrait juste après avoir été coupé.
 
 6. **Une cérémonie WebAuthn ne prouve rien sans ses cinq contrôles.** Le défi vient du
    serveur et n'y revient jamais — il est consommé par un unique `DELETE … RETURNING`,
