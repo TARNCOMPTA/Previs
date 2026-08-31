@@ -59,6 +59,8 @@ packages/mcp      Serveur MCP : quinze outils en français pour lire, remplir,
 
 packages/web      Interface React. Appelle le moteur de calcul localement :
                   la saisie se répercute instantanément sur tous les états.
+                  Vue scindée : la saisie à gauche, un état financier à droite,
+                  qui se recalcule à chaque frappe.
 ```
 
 Le flux d'une modification, d'où qu'elle vienne :
@@ -108,6 +110,32 @@ compte au démarrage.
 La génération PDF a besoin de Chromium. Sans `CHROMIUM_PATH`, c'est Playwright
 qui choisit son binaire — la coquille sans affichage, bâtie pour cela ; ne
 renseignez la variable que pour imposer un Chromium de distribution.
+
+---
+
+## Deux écrans côte à côte
+
+La saisie d'un dossier se fait devant son résultat. Un écran de saisie s'ouvre à gauche, un
+état financier à droite, et le moteur tourne à chaque frappe : un loyer corrigé se lit
+aussitôt dans le compte de résultat, un emprunt ajouté dans le plan de financement.
+
+- Le tableau de droite se choisit dans son sélecteur, et il est **proposé selon l'écran de
+  saisie** — le plan de financement en face des investissements et des financements, le
+  compte de résultat en face des charges et des recettes, le bilan en face de « Autres ».
+- Le choix voyage dans l'adresse (`?resultat=bilan`) : un lien partagé rouvre la même paire.
+- La **poignée** entre les deux volets se glisse à la souris, se déplace aux flèches du
+  clavier, revient à sa largeur par défaut au double-clic, et sa position est retenue. Le
+  volet de saisie ne descend jamais sous 520 px, celui de résultat sous 380.
+- Le bouton `▮▮` de l'en-tête revient à un seul écran, avec la navigation latérale. Un état
+  ouvert depuis cette navigation s'affiche en pleine largeur ; le bouton `⤢` du volet y mène
+  directement.
+- Sous 1 180 px de large, deux volets ne tiennent pas — le tableau le plus étroit demande
+  400 px et la grille de saisie la plus modeste 520 : la vue se replie alors d'elle-même sur
+  un seul écran et le bouton le dit.
+
+Dans une grille de saisie, la **colonne d'intitulés reste figée** quand les colonnes
+d'exercices défilent latéralement : à trois exercices déjà, la grille du personnel demande
+2 299 px. On ne saisit pas un montant sans voir à quel poste il s'applique.
 
 ---
 

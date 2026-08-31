@@ -99,6 +99,22 @@ p { margin: 0 0 10px; }
 
 a { color: var(--bleu); text-decoration: none; }
 a:hover { text-decoration: underline; }
+/*
+ * Un bouton qui a l'apparence d'un lien : pour une action qui ne navigue pas mais qui se
+ * lit comme un renvoi — changer le tableau du volet de résultat, par exemple. C'est un
+ * bouton et non un lien parce qu'il n'y a pas d'adresse derrière : un lien sans href n'est
+ * pas atteignable au clavier.
+ */
+.lien {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: var(--bleu);
+  cursor: pointer;
+  text-align: left;
+}
+.lien:hover { text-decoration: underline; }
 
 :focus-visible {
   outline: 2px solid var(--bleu);
@@ -228,6 +244,17 @@ table.grille, table.etat {
   border-spacing: 0;
   font-variant-numeric: tabular-nums;
 }
+/*
+ * « position: sticky » sur un en-tête de tableau, et ce qu'il faut en savoir.
+ *
+ * Il ne colle que si l'ancêtre défilant est le volet — ou « main » — et non l'enveloppe
+ * « .defilement-horizontal » : « overflow-x: auto » force « overflow-y » à « auto » aussi,
+ * ce qui fait de l'enveloppe un conteneur de défilement de hauteur libre, jamais défilé
+ * verticalement. Vérifié au navigateur sur une grille de cent trente-huit lignes :
+ * l'en-tête part avec le contenu. Les tableaux enveloppés n'ont donc pas d'en-tête collant,
+ * et c'est un défaut d'aujourd'hui, non de la vue scindée. La règle est conservée pour les
+ * tableaux non enveloppés, où elle fonctionne.
+ */
 table.grille th, table.etat th {
   position: sticky;
   top: 0;
@@ -242,6 +269,61 @@ table.grille th, table.etat th {
 }
 :root.sombre table.grille th, :root.sombre table.etat th { color: #0f1320; }
 table.grille th:first-child, table.etat th:first-child { text-align: left; }
+
+/*
+ * La colonne d'intitulés reste en place quand la grille défile latéralement.
+ *
+ * Ce défilement est la règle et non l'exception : à trois exercices déjà, la grille du
+ * personnel demande 2 299 px pour 1 232 disponibles, et la vue scindée le généralise.
+ * Sans colonne figée, on saisit un montant sans voir à quel poste il s'applique — et le
+ * liseré violet qui signale une ligne écrite par l'assistant sort de l'écran avec lui.
+ * Ici, contrairement à « top », l'enveloppe défile bien sur cet axe : le calage tient.
+ *
+ * Deux cas, d'où la classe « avec-detail » : une grille dépliable porte d'abord une colonne
+ * de chevron large de 28 px, et c'est alors la deuxième colonne qui porte l'intitulé.
+ */
+table.grille td:first-child,
+table.grille th:first-child,
+table.grille.avec-detail td:nth-child(2),
+table.grille.avec-detail th:nth-child(2) {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+}
+/*
+ * La colonne de chevron mesure exactement 28 px, garnissage compris : c'est ce qui permet
+ * de caler l'intitulé à « left: 28px » au pixel. Avec le garnissage de 8 px des autres
+ * cellules, sa boîte en ferait 44 et l'intitulé se décalerait de seize pixels au défilement.
+ */
+table.grille.avec-detail td:first-child,
+table.grille.avec-detail th:first-child { width: 28px; padding-left: 0; padding-right: 0; }
+table.grille.avec-detail td:nth-child(2), table.grille.avec-detail th:nth-child(2) { left: 28px; }
+table.grille th:first-child, table.grille.avec-detail th:nth-child(2) { z-index: 3; }
+
+/* Un fond opaque, sans quoi les cellules défilantes passeraient dessous en transparence. */
+table.grille tbody td:first-child,
+table.grille.avec-detail tbody td:nth-child(2) { background: var(--surface); }
+table.grille tbody tr:nth-child(even) > td:first-child,
+table.grille.avec-detail tbody tr:nth-child(even) > td:nth-child(2) { background: var(--surface-2); }
+table.grille tbody tr:hover > td:first-child,
+table.grille.avec-detail tbody tr:hover > td:nth-child(2) { background: var(--bleu-clair); }
+
+/* Le filet qui marque la limite de la partie figée. */
+table.grille td:first-child::after,
+table.grille th:first-child::after,
+table.grille.avec-detail td:nth-child(2)::after,
+table.grille.avec-detail th:nth-child(2)::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--trait);
+}
+/* Sur une grille dépliable, le filet n'appartient qu'à la colonne d'intitulés. */
+table.grille.avec-detail td:first-child::after,
+table.grille.avec-detail th:first-child::after { display: none; }
 table.grille td, table.etat td {
   padding: 3px 8px;
   border-bottom: 1px solid var(--trait);
@@ -271,7 +353,30 @@ td.negatif, .negatif { color: var(--erreur); }
 tr.ligne-llm > td:first-child { box-shadow: inset 3px 0 0 var(--llm); }
 
 .defilement-horizontal { overflow-x: auto; max-width: 100%; }
-.defilement-horizontal table { min-width: max-content; }
+
+/*
+ * Deux comportements en largeur contrainte, et la distinction compte.
+ *
+ * Une **grille de saisie** garde sa largeur naturelle et défile : ses cellules portent des
+ * champs et des listes déroulantes, que resserrer réduirait « Autres services extérieurs »
+ * à « Autres services extér ». On préfère faire défiler que rogner une étiquette.
+ *
+ * Un **tableau d'état** se resserre jusqu'à sa largeur incompressible, et ne défile qu'au-delà.
+ * Avec « max-content » pour tous, le compte de résultat du volet de résultat — large de
+ * 1 146 px par nature, mais qui tient en 522 — se faisait couper dans un volet de 700 px.
+ * Rien n'y est écrasé : les cellules sont en « white-space: nowrap », donc aucun chiffre
+ * n'est tronqué, la colonne cesse simplement d'avoir du mou.
+ */
+.defilement-horizontal table.grille { min-width: max-content; }
+.defilement-horizontal table.etat { min-width: min-content; }
+/*
+ * Plancher de la colonne d'intitulés d'un état.
+ *
+ * Sans lui, le resserrement la ramenait à son mot le plus long et « Total des produits
+ * d'exploitation » s'étalait sur trois lignes : un tableau financier se lit par rangées,
+ * et une rangée haute de trois lignes se suit mal de l'œil. Le tableau défile plutôt.
+ */
+table.etat th:first-child, table.etat td:first-child { min-width: 190px; }
 
 .zone-vide {
   padding: 28px 16px;
@@ -295,6 +400,76 @@ tr.ligne-llm > td:first-child { box-shadow: inset 3px 0 0 var(--llm); }
 .mono { font-family: var(--police-mono); font-size: 12px; }
 .nombres { font-variant-numeric: tabular-nums; text-align: right; }
 
+/* ─── Vue scindée : saisie à gauche, résultat à droite ─────────────────────── */
+
+/*
+ * Chaque volet est son propre conteneur de défilement. C'est ce qui permet de faire
+ * défiler une grille de saisie de quarante lignes sans perdre de vue le tableau de
+ * résultat — et les en-têtes collants de chaque tableau se résolvent alors contre leur
+ * propre volet, chacun restant en haut du sien.
+ */
+.volet { overflow: auto; min-width: 0; min-height: 0; }
+.volet-gauche { flex: 1; padding: 18px; }
+.volet-droit {
+  flex: none;
+  width: var(--largeur-volet-droit, 560px);
+  padding: 18px 18px 18px 14px;
+  background: var(--surface-2);
+  border-left: 1px solid var(--trait);
+}
+
+/*
+ * La poignée est large de 7 px pour rester attrapable à la souris, et elle affiche un
+ * filet de 1 px : c'est le trait de séparation des deux volets, pas un bandeau.
+ */
+.poignee-volets {
+  flex: none;
+  width: 7px;
+  margin: 0 -3px;
+  z-index: 3;
+  cursor: col-resize;
+  background: transparent;
+  border: none;
+  position: relative;
+}
+.poignee-volets::after {
+  content: '';
+  position: absolute;
+  inset: 0 3px;
+  background: var(--trait);
+  transition: background 120ms;
+}
+.poignee-volets:hover::after,
+.poignee-volets.active::after { background: var(--turquoise); }
+.poignee-volets:focus-visible { outline: none; }
+.poignee-volets:focus-visible::after { background: var(--bleu); inset: 0 2px; }
+
+/* Le sélecteur d'état, en tête du volet de droite. */
+.tete-volet {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  min-width: 0;
+}
+
+/*
+ * Sous 1180 px, deux volets ne tiennent plus : le tableau d'état mesure au moins 400 px
+ * et la grille de saisie 520 px, poignée comprise. La vue scindée se replie alors d'elle-même
+ * en une colonne, le résultat sous la saisie — c'est la coquille qui décide, cette règle
+ * n'est qu'un filet de sécurité pour un redimensionnement en cours de route.
+ */
+@media (max-width: 1179px) {
+  .volet-droit {
+    width: auto;
+    border-left: none;
+    border-top: 1px solid var(--trait);
+  }
+}
+
 @media print {
   .sans-impression { display: none !important; }
+  /* À l'impression, les deux volets se suivent : rien ne défile sur du papier. */
+  .volet { overflow: visible; }
+  .volet-droit { width: auto; border-left: none; }
 }

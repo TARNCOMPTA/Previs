@@ -45,6 +45,7 @@ server/src/pdf/          document HTML imprimé par Chromium, charte pourpre
 server/src/pdf/polices/  les six woff2 incorporées, et leur générateur
 mcp/src/outils.ts        les quinze outils exposés à l'assistant
 web/src/store/dossier.ts état, recalcul, enregistrement différé, synchronisation
+web/src/layout/          coquille d'un dossier, registre des écrans, volet de résultat
 web/src/ui/              composants partagés — n'en créer un nouveau qu'ici
 ```
 
@@ -150,6 +151,21 @@ chiffres. La mise en page, elle, se regarde — voir ci-dessous.
 Pour une modification de l'interface, la lancer réellement : `npm run dev`, puis
 parcourir les écrans touchés. Un typecheck qui passe ne prouve pas qu'un écran
 s'affiche.
+
+Deux écueils propres à la **vue scindée** (`web/src/layout/`), qui ne se devinent pas :
+
+1. **Une frontière `Suspense` par volet.** Les écrans sont chargés à la demande ; sans
+   frontière propre, le premier affichage de l'un remplace toute la fenêtre par
+   « Chargement… ». La coquille en pose une par volet.
+2. **`ChampMontant` ne remonte sa saisie qu'au `blur`.** Tout ce qui démonte un volet —
+   bascule du bouton, franchissement du seuil de 1 180 px — doit donc valider la frappe en
+   cours d'abord, sans quoi le montant revient à sa valeur précédente sous les yeux de
+   l'utilisateur.
+
+Et un défaut préexistant, qu'il vaut mieux connaître : `overflow-x: auto` fait de
+`.defilement-horizontal` un conteneur de défilement sur **les deux** axes, de hauteur libre.
+Un en-tête de tableau en `position: sticky; top: 0` s'y accroche donc et ne colle jamais.
+Le calage latéral de la colonne d'intitulés, lui, fonctionne : cet axe défile vraiment.
 
 Pour une modification du chemin de saisie, mesurer : ouvrir un dossier d'une
 soixantaine de lignes et chronométrer la tâche synchrone déclenchée par une frappe.

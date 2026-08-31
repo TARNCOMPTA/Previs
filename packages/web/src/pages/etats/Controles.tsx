@@ -2,7 +2,7 @@ import { formaterEuros, type Controle } from '@previs/core';
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { Bandeau } from '../../ui/divers.js';
-import { AvecResultats, BlocEtat } from './commun.js';
+import { AvecResultats, BlocEtat, useVolet } from './commun.js';
 
 /** Section vers laquelle orienter la correction, selon le contrôle en défaut. */
 const ORIENTATION: Record<string, { chemin: string; libelle: string }> = {
@@ -20,6 +20,52 @@ const ORIENTATION: Record<string, { chemin: string; libelle: string }> = {
   seuil_non_atteint: { chemin: 'recettes', libelle: 'Revoir les recettes' },
   capitaux_propres_negatifs: { chemin: 'financements', libelle: 'Renforcer les fonds propres' },
 };
+
+/**
+ * Le renvoi d'un contrôle vers l'écran qui permet de le corriger.
+ *
+ * Rendu dans le volet de résultat, un renvoi vers un autre ÉTAT change le contenu du volet
+ * au lieu de naviguer : suivre le lien quitterait la vue scindée, refermant l'écran de
+ * saisie au moment même où l'on venait corriger. Un renvoi vers un écran de SAISIE, lui,
+ * navigue bien — c'est le volet de gauche qu'il change — et garde les contrôles à droite.
+ */
+function Orientation({
+  dossierId,
+  chemin,
+  libelle,
+}: {
+  dossierId: string;
+  chemin: string;
+  libelle: string;
+}) {
+  const volet = useVolet();
+  const style = { fontSize: 12, display: 'inline-block', marginTop: 5 } as const;
+  const versUnEtat = chemin.startsWith('etats/');
+
+  if (volet && versUnEtat) {
+    return (
+      <button
+        className="lien"
+        style={style}
+        onClick={() => volet.changerResultat(chemin.slice('etats/'.length))}
+      >
+        {libelle} →
+      </button>
+    );
+  }
+  return (
+    <Link
+      to={{
+        pathname: `/dossiers/${dossierId}/${chemin}`,
+        // Depuis le volet, on garde les contrôles ouverts à droite en changeant de saisie.
+        search: volet ? '?resultat=controles' : '',
+      }}
+      style={style}
+    >
+      {libelle} →
+    </Link>
+  );
+}
 
 /** Écran des contrôles de cohérence : la pièce de confiance du dossier. */
 export default function Controles() {
@@ -61,12 +107,7 @@ export default function Controles() {
               </div>
               <div style={{ fontSize: 12.5 }}>{c.message}</div>
               {orientation && id ? (
-                <Link
-                  to={`/dossiers/${id}/${orientation.chemin}`}
-                  style={{ fontSize: 12, display: 'inline-block', marginTop: 5 }}
-                >
-                  {orientation.libelle} →
-                </Link>
+                <Orientation dossierId={id} chemin={orientation.chemin} libelle={orientation.libelle} />
               ) : null}
             </div>
           );

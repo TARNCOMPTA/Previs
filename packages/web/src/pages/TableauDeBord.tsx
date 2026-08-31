@@ -4,7 +4,7 @@ import { useDossier } from '../store/dossier.js';
 import { Bandeau, CarteIndicateur, Chargement, Graphique } from '../ui/divers.js';
 
 /** Synthèse d'un dossier : indicateurs, graphiques, contrôles et sections à compléter. */
-export function TableauDeBord() {
+export default function TableauDeBord() {
   const { id } = useParams<{ id: string }>();
   const { dossier, resultats } = useDossier();
   if (!dossier || !resultats) return <Chargement />;

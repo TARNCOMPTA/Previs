@@ -6,11 +6,15 @@ build/
 *.log
 npm-debug.log*
 .DS_Store
-data/*.db
-data/*.db-journal
-data/*.db-wal
-data/*.db-shm
+# Bases et journaux SQLite, à quelque profondeur qu'ils soient : lancé depuis
+# « packages/server », le serveur écrit dans « packages/server/data/ », que la forme
+# « data/*.db » ne couvrait pas — un dossier client aurait pu partir dans un commit.
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
 data/uploads/
+data/etat-pdf
 sauvegardes/
 premier-acces.txt
 chromium/

@@ -67,7 +67,12 @@ export function GrilleLignes<T>({
   return (
     <div>
       <div className="defilement-horizontal">
-        <table className="grille">
+        {/*
+          « avec-detail » dit à la feuille de style que la colonne d'intitulés est la
+          deuxième et non la première : c'est elle qui reste figée quand la grille défile
+          latéralement, et son décalage dépend de la présence de la colonne de dépliage.
+        */}
+        <table className={`grille${detail ? ' avec-detail' : ''}`}>
           <thead>
             <tr>
               {detail ? <th style={{ width: 28 }} aria-label="Détail" /> : null}

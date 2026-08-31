@@ -1,30 +1,33 @@
 import { formaterEuros, formaterMontant, LIBELLES_REGIME } from '@previs/core';
-import { useEffect, useState } from 'react';
-import { NavLink, Outlet, useNavigate, useParams } from 'react-router-dom';
+import { Suspense, useEffect, useState } from 'react';
+import {
+  NavLink,
+  Outlet,
+  useLocation,
+  useNavigate,
+  useParams,
+  useSearchParams,
+} from 'react-router-dom';
 import { api } from '../api/client.js';
 import { useDossier } from '../store/dossier.js';
 import { useSession } from '../store/session.js';
 import { Bandeau, Chargement, Modale } from '../ui/divers.js';
+import { DeuxVolets } from '../ui/volets.js';
+import { ETATS, SECTIONS, etatLie, sectionParChemin } from './ecrans.js';
+import { VoletResultat } from './VoletResultat.js';
 
-const SECTIONS = [
-  { chemin: 'tableau-de-bord', libelle: 'Tableau de bord' },
-  { chemin: 'investissements', libelle: 'Investissement' },
-  { chemin: 'financements', libelle: 'Financement' },
-  { chemin: 'charges', libelle: 'Charges' },
-  { chemin: 'recettes', libelle: 'Recettes' },
-  { chemin: 'autres', libelle: 'Autres' },
-];
+/** Clés de mémorisation dans le stockage local. */
+const CLE_MODE = 'previs.vue-scindee';
+const CLE_LARGEUR = 'previs.largeur-volet-resultat';
 
-const ETATS = [
-  { chemin: 'etats/compte-resultat', libelle: 'Compte de résultat' },
-  { chemin: 'etats/sig', libelle: 'Soldes de gestion' },
-  { chemin: 'etats/tresorerie', libelle: 'Trésorerie' },
-  { chemin: 'etats/plan-financement', libelle: 'Plan de financement' },
-  { chemin: 'etats/bilan', libelle: 'Bilan et BFR' },
-  { chemin: 'etats/tva', libelle: 'TVA' },
-  { chemin: 'etats/ratios', libelle: 'Ratios et seuil' },
-  { chemin: 'etats/controles', libelle: 'Contrôles' },
-];
+/**
+ * Largeur en deçà de laquelle deux volets ne tiennent pas.
+ *
+ * Mesuré, non supposé : le tableau d'état le plus étroit demande 400 px et la grille de
+ * saisie la plus modeste 520 px, poignée comprise. Sous 1180 px la vue scindée se replie
+ * donc sur un seul écran, et le bouton de bascule le dit.
+ */
+const LARGEUR_MINIMALE_SCISSION = 1180;
 
 /** Libellé de l'état d'enregistrement affiché en permanence dans l'en-tête. */
 function libelleEtat(etat: string): { texte: string; ton: 'neutre' | 'attente' | 'erreur' } {
@@ -75,6 +78,55 @@ export function CoquilleDossier() {
   const [erreurExport, setErreurExport] = useState<string | null>(null);
   const [versionsOuvertes, setVersionsOuvertes] = useState(false);
 
+  // ─── Vue scindée ──────────────────────────────────────────────────────────
+  const emplacement = useLocation();
+  const [requete, setRequete] = useSearchParams();
+  const [scissionVoulue, setScissionVoulue] = useState(lirePreference);
+  const [assezLarge, setAssezLarge] = useState(fenetreAssezLarge);
+
+  useEffect(() => {
+    const media = window.matchMedia(`(min-width: ${LARGEUR_MINIMALE_SCISSION}px)`);
+    const surChangement = () => {
+      // Franchir le seuil démonte un volet : la frappe en cours doit être validée avant.
+      validerLaFrappeEnCours();
+      setAssezLarge(media.matches);
+    };
+    media.addEventListener('change', surChangement);
+    return () => media.removeEventListener('change', surChangement);
+  }, []);
+
+  /** Le dernier segment de l'URL, qui dit quel écran est ouvert. */
+  const segment = emplacement.pathname.split('/').filter(Boolean).pop() ?? '';
+  const sectionCourante = sectionParChemin(segment);
+  /*
+   * Un état ouvert depuis la navigation latérale s'affiche en pleine largeur : c'est le
+   * volet de gauche qui porte la saisie, et il n'y a rien à saisir sur un état.
+   */
+  const scinde = Boolean(scissionVoulue && assezLarge && sectionCourante);
+  const resultatDroite = requete.get('resultat') ?? etatLie(segment);
+
+  const changerResultat = (chemin: string) => {
+    const suivante = new URLSearchParams(requete);
+    suivante.set('resultat', chemin);
+    // « replace » : changer de tableau à droite n'est pas une étape de navigation.
+    setRequete(suivante, { replace: true });
+  };
+
+  const basculerScission = () => {
+    validerLaFrappeEnCours();
+    const suivant = !scissionVoulue;
+    setScissionVoulue(suivant);
+    ecrirePreference(suivant);
+    // Scinder depuis un état garde cet état à droite et rouvre la saisie à gauche.
+    if (suivant && !sectionCourante) {
+      const etatOuvert = ETATS.find((e) => e.chemin === segment)?.chemin;
+      naviguer({
+        pathname: `/dossiers/${id}/tableau-de-bord`,
+        search: etatOuvert ? `?resultat=${etatOuvert}` : '',
+      });
+    }
+  };
+
   useEffect(() => {
     if (id) void ouvrir(id);
     return () => fermer();
@@ -105,6 +157,50 @@ export function CoquilleDossier() {
   const coherent = resultats?.coherent ?? true;
   const nbErreurs = resultats?.controles.filter((c) => !c.ok && c.gravite === 'erreur').length ?? 0;
   const dernier = (resultats?.exercices.length ?? 1) - 1;
+
+  /**
+   * Les bandeaux d'avertissement, montés une seule fois.
+   *
+   * Ils étaient auparavant dans le corps de « main ». En vue scindée il n'y a plus un
+   * « main » mais deux volets, et un bandeau de conflit de version ne concerne ni l'un ni
+   * l'autre : il concerne le dossier.
+   */
+  const bandeaux = [
+    misAJourAilleurs ? (
+      <Bandeau key="ailleurs" ton="llm">
+        Ce dossier vient d’être mis à jour par l’assistant. Les lignes concernées sont
+        signalées par un liseré violet.
+      </Bandeau>
+    ) : null,
+    etat === 'conflit' ? (
+      <Bandeau
+        key="conflit"
+        ton="alerte"
+        action={
+          <button className="bouton petit" onClick={() => void recharger()}>
+            Recharger
+          </button>
+        }
+      >
+        {messageErreur}
+      </Bandeau>
+    ) : null,
+    etat === 'erreur' && messageErreur ? (
+      <Bandeau key="erreur" ton="erreur">
+        {messageErreur}
+      </Bandeau>
+    ) : null,
+    erreurCalcul ? (
+      <Bandeau key="calcul" ton="erreur">
+        Le calcul a échoué : {erreurCalcul}. Les derniers résultats valides restent affichés.
+      </Bandeau>
+    ) : null,
+    erreurExport ? (
+      <Bandeau key="export" ton="erreur">
+        {erreurExport}
+      </Bandeau>
+    ) : null,
+  ].filter(Boolean);
 
   const exporter = async () => {
     setExportEnCours(true);
@@ -179,6 +275,22 @@ export function CoquilleDossier() {
           {coherent ? 'Cohérent' : `${nbErreurs} écart(s)`}
         </NavLink>
 
+        <button
+          className={`bouton ${scinde ? '' : 'discret'}`}
+          onClick={basculerScission}
+          disabled={!assezLarge}
+          aria-pressed={scinde}
+          title={
+            assezLarge
+              ? scinde
+                ? 'Revenir à un seul écran'
+                : 'Afficher la saisie et le résultat côte à côte'
+              : `La vue scindée demande une fenêtre de ${LARGEUR_MINIMALE_SCISSION} pixels de large`
+          }
+        >
+          {scinde ? '▮▮' : '▮'}
+        </button>
+
         <button className="bouton discret" onClick={() => setVersionsOuvertes(true)} title="Historique des versions">
           Historique
         </button>
@@ -199,64 +311,87 @@ export function CoquilleDossier() {
 
       {/* ─── Corps ───────────────────────────────────────────────────────── */}
       <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
-        <nav
-          className="sans-impression"
-          style={{
-            width: 208,
-            flex: 'none',
-            borderRight: '1px solid var(--trait)',
-            background: 'var(--surface)',
-            padding: '12px 8px',
-            overflowY: 'auto',
-          }}
-        >
-          <div className="libelle" style={{ padding: '0 8px' }}>
-            Saisie
-          </div>
-          {SECTIONS.map((s) => (
-            <LienNavigation key={s.chemin} to={`/dossiers/${fiche.id}/${s.chemin}`} libelle={s.libelle} />
-          ))}
-          <div className="libelle" style={{ padding: '14px 8px 0' }}>
-            États financiers
-          </div>
-          {ETATS.map((s) => (
-            <LienNavigation key={s.chemin} to={`/dossiers/${fiche.id}/${s.chemin}`} libelle={s.libelle} />
-          ))}
-        </nav>
+        {/*
+          La navigation latérale s'efface en vue scindée : ses 208 px sont ce qui manque aux
+          deux volets pour tenir, et chaque volet porte alors son propre sélecteur d'écran.
+        */}
+        {scinde ? null : (
+          <nav
+            className="sans-impression"
+            style={{
+              width: 208,
+              flex: 'none',
+              borderRight: '1px solid var(--trait)',
+              background: 'var(--surface)',
+              padding: '12px 8px',
+              overflowY: 'auto',
+            }}
+          >
+            <div className="libelle" style={{ padding: '0 8px' }}>
+              Saisie
+            </div>
+            {SECTIONS.map((s) => (
+              <LienNavigation key={s.chemin} to={`/dossiers/${fiche.id}/${s.chemin}`} libelle={s.libelle} />
+            ))}
+            <div className="libelle" style={{ padding: '14px 8px 0' }}>
+              États financiers
+            </div>
+            {ETATS.map((s) => (
+              <LienNavigation
+                key={s.chemin}
+                to={`/dossiers/${fiche.id}/etats/${s.chemin}`}
+                libelle={s.libelle}
+              />
+            ))}
+          </nav>
+        )}
 
-        <main style={{ flex: 1, overflowY: 'auto', padding: 18, minWidth: 0 }}>
-          <div className="pile" style={{ maxWidth: 1180, margin: '0 auto' }}>
-            {misAJourAilleurs ? (
-              <Bandeau ton="llm">
-                Ce dossier vient d’être mis à jour par l’assistant. Les lignes concernées sont
-                signalées par un liseré violet.
-              </Bandeau>
-            ) : null}
+        <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0 }}>
+          {/*
+            Les bandeaux concernent le dossier, non l'un des volets : ils restent au-dessus
+            des deux, où ils se voient quel que soit le volet consulté.
+          */}
+          {bandeaux.length ? (
+            <div
+              className="pile"
+              style={{ padding: scinde ? '12px 18px 0' : '18px 18px 0', gap: 10, flex: 'none' }}
+            >
+              {bandeaux}
+            </div>
+          ) : null}
 
-            {etat === 'conflit' ? (
-              <Bandeau
-                ton="alerte"
-                action={
-                  <button className="bouton petit" onClick={() => void recharger()}>
-                    Recharger
-                  </button>
-                }
-              >
-                {messageErreur}
-              </Bandeau>
-            ) : null}
-
-            {etat === 'erreur' && messageErreur ? <Bandeau ton="erreur">{messageErreur}</Bandeau> : null}
-            {erreurCalcul ? (
-              <Bandeau ton="erreur">
-                Le calcul a échoué : {erreurCalcul}. Les derniers résultats valides restent affichés.
-              </Bandeau>
-            ) : null}
-            {erreurExport ? <Bandeau ton="erreur">{erreurExport}</Bandeau> : null}
-
-            <Outlet />
-          </div>
-        </main>
+          {scinde ? (
+            <DeuxVolets
+              cle={CLE_LARGEUR}
+              gauche={
+                <>
+                  <OngletsSaisie dossierId={fiche.id} courant={segment} recherche={emplacement.search} />
+                  {/*
+                    Une frontière Suspense par volet, et non celle de l'application : sans elle,
+                    le premier affichage d'un écran chargé à la demande remplacerait toute la
+                    fenêtre par « Chargement… », en-tête et volet de résultat compris.
+                  */}
+                  <Suspense fallback={<Chargement />}>
+                    <Outlet />
+                  </Suspense>
+                </>
+              }
+              droite={
+                <VoletResultat
+                  chemin={resultatDroite}
+                  onChanger={changerResultat}
+                  dossierId={fiche.id}
+                />
+              }
+            />
+          ) : (
+            <main style={{ flex: 1, overflowY: 'auto', padding: 18, minWidth: 0 }}>
+              <div className="pile" style={{ maxWidth: 1180, margin: '0 auto' }}>
+                <Outlet />
+              </div>
+            </main>
+          )}
+        </div>
       </div>
 
       {/* ─── Indicateurs permanents ──────────────────────────────────────── */}
@@ -300,6 +435,93 @@ export function CoquilleDossier() {
       ) : null}
     </div>
   );
+}
+
+/**
+ * Les onglets de saisie, en tête du volet de gauche.
+ *
+ * Ils remplacent la navigation latérale, effacée en vue scindée. La chaîne de requête est
+ * reportée sur chaque lien : changer d'écran de saisie ne doit pas refermer le tableau
+ * qu'on avait ouvert à droite.
+ */
+function OngletsSaisie({
+  dossierId,
+  courant,
+  recherche,
+}: {
+  dossierId: string;
+  courant: string;
+  recherche: string;
+}) {
+  return (
+    <div
+      className="rangee sans-impression"
+      style={{
+        gap: 2,
+        marginBottom: 14,
+        borderBottom: '1px solid var(--trait)',
+        paddingBottom: 6,
+        flexWrap: 'wrap',
+      }}
+    >
+      {SECTIONS.map((section) => {
+        const actif = section.chemin === courant;
+        return (
+          <NavLink
+            key={section.chemin}
+            to={{ pathname: `/dossiers/${dossierId}/${section.chemin}`, search: recherche }}
+            style={{
+              padding: '5px 10px',
+              borderRadius: 'var(--rayon)',
+              fontSize: 13,
+              fontWeight: actif ? 600 : 400,
+              color: actif ? 'var(--bleu)' : 'var(--texte-doux)',
+              background: actif ? 'var(--bleu-clair)' : 'transparent',
+              textDecoration: 'none',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {section.court ?? section.libelle}
+          </NavLink>
+        );
+      })}
+    </div>
+  );
+}
+
+/** La préférence de vue scindée, mémorisée d'une session à l'autre. Scindée par défaut. */
+function lirePreference(): boolean {
+  try {
+    const brut = window.localStorage.getItem(CLE_MODE);
+    return brut === null ? true : brut === '1';
+  } catch {
+    return true;
+  }
+}
+
+function ecrirePreference(valeur: boolean): void {
+  try {
+    window.localStorage.setItem(CLE_MODE, valeur ? '1' : '0');
+  } catch {
+    // Stockage refusé : la préférence ne vaut que pour la session en cours.
+  }
+}
+
+function fenetreAssezLarge(): boolean {
+  return window.matchMedia(`(min-width: ${LARGEUR_MINIMALE_SCISSION}px)`).matches;
+}
+
+/**
+ * Valide la frappe en cours avant tout changement de forme de l'arbre.
+ *
+ * « ChampMontant » garde sa saisie en état local et ne la remonte qu'au « blur » : un
+ * démontage sans blur préalable — bascule du bouton, franchissement du seuil de largeur —
+ * ferait revenir le montant à sa valeur précédente, sous les yeux de l'utilisateur et sans
+ * rien pour l'expliquer.
+ */
+function validerLaFrappeEnCours(): void {
+  const actif = document.activeElement;
+  if (actif instanceof HTMLElement && actif !== document.body) actif.blur();
 }
 
 function LienNavigation({ to, libelle }: { to: string; libelle: string }) {
