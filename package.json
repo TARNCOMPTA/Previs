@@ -18,7 +18,7 @@
     "build:core": "npm run build -w @previs/core",
     "dev": "concurrently -n server,web -c blue,green \"npm run dev -w @previs/server\" \"npm run dev -w @previs/web\"",
     "start": "node packages/server/dist/index.js",
-    "test": "npm run test -w @previs/core && npm run test -w @previs/server",
+    "test": "npm run test -w @previs/core && npm run test -w @previs/server && npm run test -w @previs/web",
     "typecheck": "npm run typecheck -w @previs/core && npm run typecheck -w @previs/server && npm run typecheck -w @previs/mcp && npm run typecheck -w @previs/web",
     "mcp:stdio": "node packages/mcp/dist/stdio.js"
   },

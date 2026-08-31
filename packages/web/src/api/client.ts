@@ -30,7 +30,12 @@ export class ErreurRequete extends Error {
   }
 }
 
-type Options = { methode?: string; corps?: unknown };
+type Options = {
+  methode?: string;
+  corps?: unknown;
+  /** Pose « keepalive » : la requête doit aboutir même si la page se démonte. */
+  survitALaPage?: boolean;
+};
 
 /** Déclenché sur toute réponse 401 : la coquille applicative renvoie à la connexion. */
 let surDeconnexion: (() => void) | null = null;
@@ -44,6 +49,10 @@ async function appeler<T>(chemin: string, options: Options = {}): Promise<T> {
     credentials: 'same-origin',
     headers: options.corps !== undefined ? { 'content-type': 'application/json' } : undefined,
     body: options.corps !== undefined ? JSON.stringify(options.corps) : undefined,
+    // « keepalive » demande au navigateur de mener la requête à son terme même si la page
+    // se démonte. C'est le seul moyen qu'un enregistrement lancé au moment où l'on ferme
+    // l'onglet parte réellement ; sans lui, le navigateur l'annule et la saisie est perdue.
+    ...(options.survitALaPage ? { keepalive: true } : {}),
   });
 
   // Un 401 n'a pas le même sens partout, et c'est le serveur qui le dit — pas une liste
@@ -139,10 +148,23 @@ export const api = {
   lireDossier: (id: string) => appeler<DossierEnregistre>(`/api/dossiers/${id}`),
   creerDossier: (requete: RequeteCreation) =>
     appeler<DossierEnregistre>('/api/dossiers', { methode: 'POST', corps: requete }),
-  enregistrerDossier: (id: string, dossier: Dossier, versionAttendue: number, commentaire = '') =>
+  /**
+   * Enregistre le dossier.
+   *
+   * `survitALaPage` sert au dernier envoi, celui qui part au moment où l'on quitte le
+   * dossier ou l'onglet : il pose « keepalive » pour que le navigateur ne l'annule pas.
+   */
+  enregistrerDossier: (
+    id: string,
+    dossier: Dossier,
+    versionAttendue: number,
+    commentaire = '',
+    survitALaPage = false,
+  ) =>
     appeler<DossierEnregistre>(`/api/dossiers/${id}`, {
       methode: 'PUT',
       corps: { dossier, versionAttendue, commentaire },
+      survitALaPage,
     }),
   appliquerOperations: (id: string, operations: Operation[], commentaire = '') =>
     appeler<{ dossier: DossierEnregistre; journal: string[]; erreurs: string[] }>(`/api/dossiers/${id}`, {

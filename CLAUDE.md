@@ -46,6 +46,7 @@ server/src/pdf/file.ts   plafond d'impressions simultanées, délai d'impression
 server/src/pdf/polices/  les huit woff2 incorporées, et leur générateur
 mcp/src/outils.ts        les quinze outils exposés à l'assistant
 web/src/store/dossier.ts état, recalcul, enregistrement différé, synchronisation
+web/test/                essais du magasin : ce qui part, ce qui est gardé, ce qui est remplacé
 web/src/layout/          coquille d'un dossier, registre des écrans, volet de résultat
 web/src/ui/              composants partagés — n'en créer un nouveau qu'ici
 ```
@@ -171,7 +172,7 @@ premier démarrage, tout le reste vient de l'écran Administration.
 
 ```bash
 npm run typecheck      # les quatre paquets
-npm test               # 77 essais du moteur et du modèle, 224 essais du serveur
+npm test               # 77 essais du moteur, 224 du serveur, 11 du magasin de l'interface
 npm run build
 ```
 
@@ -192,6 +193,29 @@ autrement.
 Pour une modification de l'interface, la lancer réellement : `npm run dev`, puis
 parcourir les écrans touchés. Un typecheck qui passe ne prouve pas qu'un écran
 s'affiche.
+
+### Le quatrième point délicat : ne pas perdre une saisie
+
+Le magasin décide de ce qui part au serveur, de ce qui est conservé et de ce qui est
+remplacé. Cinq chemins y perdaient une frappe en silence, et `packages/web/test/` les
+verrouille désormais un par un — c'est le revers de la première règle du projet : ne jamais
+inventer un chiffre suppose de ne jamais en perdre un.
+
+1. **Quitter n'annule pas, quitter envoie.** `fermer()` vidait la minuterie de 800 ms sans la
+   déclencher : un montant tapé juste avant le clic sur « Retour à la liste » ne partait
+   jamais. Il est maintenant envoyé, avec `keepalive`, y compris sur `pagehide`.
+2. **Le garde de réentrance porte sur un drapeau de vol, jamais sur l'état du magasin.**
+   `transformer()` repose « modifie » à chaque frappe : un garde fondé sur l'état laissait
+   partir deux PUT avec la MÊME `versionAttendue`, et la réponse du premier écrasait la
+   frappe faite entre-temps.
+3. **La réponse d'un envoi se juge sur l'IDENTITÉ du dossier envoyé.** Si le dossier courant
+   n'est plus celui qui est parti, c'est la frappe qui fait foi. Et quand rien n'a changé, on
+   garde tout de même le graphe LOCAL : la réponse du serveur est un graphe entièrement neuf,
+   dont l'adoption détruisait tout le partage structurel et faisait rerendre chaque grille.
+4. **Le sondage relit l'état APRÈS son aller-retour.** Son garde portait sur un état vieux
+   d'un GET : une frappe faite pendant le vol était remplacée par la version du serveur.
+5. **Toute écriture qui suit un aller-retour porte un jeton d'ouverture.** Sans lui, une
+   réponse tardive repeuplait un magasin déjà fermé et installait un intervalle orphelin.
 
 Deux écueils propres à la **vue scindée** (`web/src/layout/`), qui ne se devinent pas :
 

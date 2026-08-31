@@ -97,7 +97,22 @@ export function ChampTaux(proprietes: Omit<ProprietesMontant, 'suffixe'>) {
   return <ChampMontant {...proprietes} decimales={proprietes.decimales ?? 2} suffixe="%" />;
 }
 
-/** Saisie d'un entier simple (effectif, durée, nombre de mois). */
+/**
+ * Saisie d'un entier simple (effectif, durée, nombre de mois).
+ *
+ * Deux précautions qui ne se devinent pas, et que l'audit a trouvées manquantes :
+ *
+ * 1. **Un champ vidé ne vaut pas zéro.** `Number('')` rend 0 : vider le champ pour retaper
+ *    une valeur inscrivait donc 0 dans le dossier à cet instant, recalculait tout le
+ *    prévisionnel et poussait une entrée d'annulation. Sur un effectif ou un nombre de mois,
+ *    c'est un chiffre faux, brièvement affiché dans le volet de résultat. La saisie vide est
+ *    tenue localement et rien n'est remonté tant qu'elle dure ; le `blur` rétablit la valeur.
+ * 2. **Les bornes sont appliquées, pas seulement déclarées.** `min` et `max` sur un `input`
+ *    n'empêchent pas de SAISIR 400 dans un champ borné à 365 par le modèle. Le moteur ne
+ *    validant pas, la valeur traversait le magasin et se calculait ; c'est le PUT qui la
+ *    refusait, en 422, avec un message qui ne nommait pas le champ — et chaque frappe
+ *    suivante rejouait le même échec.
+ */
 export function ChampNombre({
   valeur,
   onChange,
@@ -108,17 +123,34 @@ export function ChampNombre({
   aide,
   desactive,
 }: ProprietesBase & { valeur: number; onChange: (v: number) => void; min?: number; max?: number; pas?: number }) {
+  const [saisie, setSaisie] = useState<string | null>(null);
+  const affichee = saisie ?? String(Number.isFinite(valeur) ? valeur : 0);
+
+  const remonter = (brut: string): void => {
+    if (brut.trim() === '') return;
+    const nombre = Number(brut);
+    if (!Number.isFinite(nombre)) return;
+    let borne = nombre;
+    if (min !== undefined) borne = Math.max(min, borne);
+    if (max !== undefined) borne = Math.min(max, borne);
+    if (borne !== valeur) onChange(borne);
+  };
+
   return (
     <Enveloppe libelle={libelle} aide={aide}>
       <input
         className="champ nombre"
         type="number"
-        value={Number.isFinite(valeur) ? valeur : 0}
+        value={affichee}
         min={min}
         max={max}
         step={pas}
         disabled={desactive}
-        onChange={(e) => onChange(Number(e.target.value))}
+        onChange={(e) => {
+          setSaisie(e.target.value);
+          remonter(e.target.value);
+        }}
+        onBlur={() => setSaisie(null)}
       />
     </Enveloppe>
   );

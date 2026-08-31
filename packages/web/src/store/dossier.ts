@@ -52,6 +52,70 @@ interface EtatDossier {
 let minuterieEnregistrement: ReturnType<typeof setTimeout> | null = null;
 let minuterieSynchro: ReturnType<typeof setInterval> | null = null;
 
+/**
+ * Numéro de l'ouverture en cours. Toute écriture dans le magasin qui suit un aller-retour
+ * réseau doit le rapprocher du sien avant d'agir.
+ *
+ * Sans lui, deux chemins écrivaient dans un magasin qui ne leur appartenait plus. Ouvrir un
+ * dossier puis revenir aussitôt à la liste laissait la réponse tardive repeupler le magasin
+ * et installer un intervalle de synchronisation que plus aucun démontage ne connaissait —
+ * quatre mille trois cents requêtes par jour pour un dossier fermé. Et ouvrir A, revenir,
+ * ouvrir B laissait A arriver après B : l'adresse disait B, l'écran montrait A.
+ */
+let ouvertureCourante = 0;
+
+/**
+ * Vrai pendant qu'un PUT est en vol.
+ *
+ * Distinct de l'état « enregistrement » du magasin, et c'est tout le point : `transformer()`
+ * repose « modifie » à chaque frappe, si bien que le garde fondé sur l'état laissait partir un
+ * SECOND PUT portant la même `versionAttendue`. Le premier revenait, voyait un état
+ * « enregistrement » posé par le second, en concluait que rien n'avait été tapé entre-temps, et
+ * adoptait la réponse du serveur : la frappe disparaissait — pendant que le bandeau promettait
+ * « Votre saisie est conservée ».
+ */
+let envoiEnVol = false;
+
+/**
+ * Ce qui reste à envoyer, tenu à jour hors du magasin.
+ *
+ * `fermer()` en a besoin : il annulait la minuterie sans la déclencher, si bien que quitter un
+ * dossier dans les 800 ms d'une frappe perdait le montant en silence — le revers exact de
+ * « ne jamais inventer un chiffre ». L'avertissement de fermeture d'onglet le lit aussi.
+ */
+let enAttenteDEnvoi: { fiche: DossierEnregistre; dossier: Dossier } | null = null;
+
+/**
+ * Envoie le dossier sans toucher au magasin, au moment où l'on quitte.
+ *
+ * Elle ne peut pas passer par `enregistrer()`, dont les `set` repeupleraient un dossier qu'on
+ * vient de fermer. En contrepartie, un conflit survenant sur ce dernier envoi ne peut plus être
+ * montré : l'écran n'existe plus. La prochaine ouverture affichera la version du serveur, ce qui
+ * est le comportement d'avant — moins la perte silencieuse du cas courant, où il n'y a pas de
+ * conflit.
+ */
+function envoyerEnQuittant(): void {
+  const attente = enAttenteDEnvoi;
+  if (!attente) return;
+  enAttenteDEnvoi = null;
+  void api
+    .enregistrerDossier(attente.fiche.id, attente.dossier, attente.fiche.version, 'Saisie', true)
+    .catch(() => undefined);
+}
+
+// Fermeture de l'onglet ou rechargement : le navigateur n'attend pas la minuterie de 800 ms.
+// « pagehide » est le seul événement fiable sur mobile, où « beforeunload » ne se déclenche pas.
+if (typeof window !== 'undefined') {
+  window.addEventListener('pagehide', envoyerEnQuittant);
+  window.addEventListener('beforeunload', (evenement) => {
+    if (!enAttenteDEnvoi) return;
+    envoyerEnQuittant();
+    // L'envoi part avec « keepalive », mais rien ne garantit qu'il aboutisse : on prévient.
+    evenement.preventDefault();
+    evenement.returnValue = '';
+  });
+}
+
 type Ligne = Record<string, unknown>;
 
 /** Accède à une liste de lignes du dossier par son chemin. */
@@ -82,6 +146,32 @@ function avecListe(
     ...dossier,
     [section]: { ...conteneur, [propriete]: suivantes },
   } as Dossier;
+}
+
+/**
+ * Message d'un échec d'enregistrement, en nommant le champ fautif quand on le connaît.
+ *
+ * Un 422 rendait « Les données transmises ne respectent pas le format attendu. » et rien de
+ * plus : le dossier restait en erreur, chaque frappe suivante rejouait le même échec, et rien
+ * ne disait quelle valeur refuser. Le `details` du contrat porte les anomalies zod, chemin
+ * compris — c'est ce chemin qui manquait à l'écran.
+ */
+function messageDEchec(e: unknown): string {
+  const base = e instanceof Error ? e.message : 'Enregistrement impossible.';
+  if (!(e instanceof ErreurRequete) || e.code !== 'donnees_invalides') return base;
+
+  const anomalies = Array.isArray(e.details)
+    ? (e.details as Array<{ path?: unknown[]; message?: string }>)
+    : [];
+  const nommees = anomalies
+    .map((a) => {
+      const chemin = Array.isArray(a.path) ? a.path.filter((p) => typeof p !== 'number').join(' › ') : '';
+      return chemin ? `${chemin}${a.message ? ` (${a.message})` : ''}` : a.message ?? '';
+    })
+    .filter(Boolean)
+    .slice(0, 3);
+  if (!nommees.length) return base;
+  return `${base} Champ en cause : ${nommees.join(' ; ')}.`;
 }
 
 /**
@@ -138,6 +228,11 @@ export const useDossier = create<EtatDossier>((set, get) => {
       pileRetablissement: options.sansHistorique ? etat.pileRetablissement : [],
     }));
 
+    // Tenu hors du magasin, pour que « fermer() » et la fermeture d'onglet sachent ce qui
+    // reste à envoyer sans avoir à relire un magasin qu'on est en train de vider.
+    const fiche = get().fiche;
+    if (fiche) enAttenteDEnvoi = { fiche, dossier: suivant };
+
     programmerEnregistrement();
   }
 
@@ -171,12 +266,19 @@ export const useDossier = create<EtatDossier>((set, get) => {
     pileRetablissement: [],
 
     async ouvrir(id) {
+      const jeton = ++ouvertureCourante;
+      if (minuterieSynchro) clearInterval(minuterieSynchro);
+      minuterieSynchro = null;
       set({ chargement: true, messageErreur: null, misAJourAilleurs: false });
       try {
         const brut = await api.lireDossier(id);
+        // Une autre ouverture, ou une fermeture, a eu lieu pendant l'aller-retour : ce
+        // dossier n'est plus celui que l'on veut, et rien de lui ne doit entrer.
+        if (jeton !== ouvertureCourante) return;
         // Seule frontière côté interface : le dossier vient du réseau, il est validé.
         const fiche = { ...brut, dossier: normaliserDossier(brut.dossier) };
         const { resultats, erreur } = recalculer(fiche.dossier);
+        enAttenteDEnvoi = null;
         set({
           fiche,
           dossier: fiche.dossier,
@@ -190,20 +292,33 @@ export const useDossier = create<EtatDossier>((set, get) => {
 
         // Surveillance discrète : détecte une écriture faite par l'assistant ou par
         // un autre poste, et ne recharge que si rien n'est en cours de saisie.
-        if (minuterieSynchro) clearInterval(minuterieSynchro);
         minuterieSynchro = setInterval(() => {
-          const etat = get();
-          if (!etat.fiche || etat.etat !== 'a_jour') return;
+          if (jeton !== ouvertureCourante) return;
+          const avant = get();
+          if (!avant.fiche || avant.etat !== 'a_jour') return;
+          const idOuvert = avant.fiche.id;
           void api
-            .lireDossier(etat.fiche.id)
+            .lireDossier(idOuvert)
             .then((brut) => {
-              if (brut.version === etat.fiche?.version) return;
+              /*
+               * L'état est RELU ici, et c'est l'essentiel. Le garde du début portait sur un
+               * état vieux d'un aller-retour : une frappe faite pendant le vol du GET était
+               * remplacée par la version du serveur, puis l'enregistrement différé partait
+               * avec une version périmée et récoltait un conflit. Le dossier du client
+               * perdait la frappe, et rien ne le disait.
+               */
+              if (jeton !== ouvertureCourante) return;
+              const apres = get();
+              if (!apres.fiche || apres.fiche.id !== idOuvert) return;
+              if (apres.etat !== 'a_jour') return;
+              if (brut.version === apres.fiche.version) return;
               const frais = { ...brut, dossier: normaliserDossier(brut.dossier) };
               const calculs = recalculer(frais.dossier);
+              enAttenteDEnvoi = null;
               set({
                 fiche: frais,
                 dossier: frais.dossier,
-                resultats: calculs.resultats ?? etat.resultats,
+                resultats: calculs.resultats ?? apres.resultats,
                 erreurCalcul: calculs.erreur,
                 misAJourAilleurs: true,
                 etat: 'a_jour',
@@ -212,6 +327,7 @@ export const useDossier = create<EtatDossier>((set, get) => {
             .catch(() => undefined);
         }, INTERVALLE_SYNCHRO);
       } catch (e) {
+        if (jeton !== ouvertureCourante) return;
         set({
           chargement: false,
           etat: 'erreur',
@@ -221,10 +337,14 @@ export const useDossier = create<EtatDossier>((set, get) => {
     },
 
     fermer() {
+      ouvertureCourante += 1;
       if (minuterieSynchro) clearInterval(minuterieSynchro);
       if (minuterieEnregistrement) clearTimeout(minuterieEnregistrement);
       minuterieSynchro = null;
       minuterieEnregistrement = null;
+      // Avant de vider : la minuterie de 800 ms était annulée sans être déclenchée, et un
+      // montant tapé juste avant le clic sur « Retour à la liste » ne partait jamais.
+      envoyerEnQuittant();
       set({
         fiche: null,
         dossier: null,
@@ -331,34 +451,71 @@ export const useDossier = create<EtatDossier>((set, get) => {
     },
 
     async enregistrer() {
-      const { fiche, dossier, etat } = get();
-      if (!fiche || !dossier || etat === 'enregistrement') return;
+      const { fiche, dossier } = get();
+      if (!fiche || !dossier) return;
+
+      /*
+       * Le garde de réentrance porte sur un drapeau propre à l'envoi, non sur l'état du
+       * magasin : `transformer()` repose « modifie » à chaque frappe, si bien qu'un garde
+       * fondé sur l'état laissait partir un second PUT avec la même `versionAttendue`.
+       * La frappe n'est pas abandonnée pour autant — elle part à la fin de l'envoi en cours.
+       */
+      // La frappe n'est pas abandonnée : `transformer()` a posé « modifie », et le bloc
+      // `finally` de l'envoi en cours reprogrammera pour elle.
+      if (envoiEnVol) return;
+      envoiEnVol = true;
+      const envoye = dossier;
+      const jeton = ouvertureCourante;
 
       set({ etat: 'enregistrement', messageErreur: null });
       try {
-        const enregistre = await api.enregistrerDossier(fiche.id, dossier, fiche.version, 'Saisie');
-        // Une frappe survenue pendant l'enregistrement ne doit pas être écrasée :
-        // seule la fiche est rafraîchie, le dossier en cours d'édition est conservé.
-        set((courant) => ({
-          fiche: enregistre,
-          dossier: courant.etat === 'enregistrement' ? enregistre.dossier : courant.dossier,
-          etat: courant.etat === 'enregistrement' ? 'a_jour' : 'modifie',
-          misAJourAilleurs: false,
-        }));
+        const enregistre = await api.enregistrerDossier(fiche.id, envoye, fiche.version, 'Saisie');
+        if (jeton !== ouvertureCourante) return;
+        set((courant) => {
+          /*
+           * C'est l'IDENTITÉ du dossier envoyé qui décide, non l'état. Si le dossier courant
+           * n'est plus celui qui vient de partir, une frappe est arrivée entre-temps et c'est
+           * elle qui fait foi : adopter la réponse du serveur l'effacerait. Le drapeau de vol
+           * interdit déjà deux envois concurrents, si bien que le critère n'est aujourd'hui
+           * jamais mis en défaut par un essai — il est gardé parce qu'il reste juste sans lui,
+           * là où l'ancien critère fondé sur l'état ne l'était que par accident.
+           *
+           * Et quand rien n'a changé, on garde tout de même le dossier LOCAL : la réponse du
+           * serveur est un graphe entièrement neuf — `normaliserDossier(JSON.parse(…))` — dont
+           * l'adoption change les 638 identités d'un dossier de 138 lignes pour un contenu
+           * identique au bit près, et fait rerendre chaque ligne de chaque grille mémoïsée.
+           */
+          const inchange = courant.dossier === envoye;
+          return {
+            fiche: enregistre,
+            dossier: inchange ? envoye : courant.dossier,
+            etat: inchange ? 'a_jour' : 'modifie',
+            misAJourAilleurs: false,
+          };
+        });
+        if (get().etat === 'a_jour') enAttenteDEnvoi = null;
       } catch (e) {
+        if (jeton !== ouvertureCourante) return;
         if (e instanceof ErreurRequete && e.code === 'conflit_version') {
           set({
             etat: 'conflit',
             messageErreur:
               'Ce dossier a été modifié ailleurs — par l’assistant ou depuis un autre poste. ' +
-              'Votre saisie est conservée : rechargez pour repartir de la version du serveur.',
+              'Votre saisie n’a pas été enregistrée : notez ce que vous venez de taper, ' +
+              'puis rechargez pour repartir de la version du serveur.',
           });
           return;
         }
         set({
           etat: 'erreur',
-          messageErreur: e instanceof Error ? e.message : 'Enregistrement impossible.',
+          messageErreur: messageDEchec(e),
         });
+      } finally {
+        envoiEnVol = false;
+        // Une frappe pendant l'envoi laisse le magasin en « modifie » avec une fiche neuve :
+        // il faut un second envoi tout de suite, sans attendre une frappe de plus. Un conflit
+        // ou une erreur, en revanche, ne se rejoue pas en boucle.
+        if (jeton === ouvertureCourante && get().etat === 'modifie') programmerEnregistrement();
       }
     },
 
