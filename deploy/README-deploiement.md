@@ -98,7 +98,21 @@ sudo /etc/cron.daily/previs-sauvegarde  # essayer la sauvegarde à la main
 ## Derrière un frontal en conteneur (Caddy, Traefik, nginx-proxy)
 
 Quand un conteneur tient déjà 80 et 443, installer avec `--sans-nginx`, puis brancher
-le renvoi. Trois points décident du bon fonctionnement.
+le renvoi. Pour un frontal Caddy, un second script fait les quatre gestes :
+
+```bash
+sudo ./deploy/brancher-frontal.sh --domaine previs.tarncompta.fr --simulation
+sudo ./deploy/brancher-frontal.sh --domaine previs.tarncompta.fr
+```
+
+Il trouve seul le conteneur qui publie le port 443, son réseau, sa passerelle, son
+sous-réseau et l'emplacement du `Caddyfile`. Il est fait pour un frontal qui dessert
+d'autres sites en production : le `Caddyfile` est sauvegardé avant d'être touché, la
+configuration est **validée avant tout rechargement**, et une validation en échec
+restaure la sauvegarde sans jamais appeler `reload`. Le relancer ne duplique rien.
+
+Ce qui suit décrit à la main ce qu'il fait, et vaut pour tout autre frontal. Trois
+points décident du bon fonctionnement.
 
 **1. Previs doit écouter là où le conteneur peut l'atteindre.** Pour un conteneur,
 `127.0.0.1` est sa propre boucle locale, pas celle de l'hôte. Il faut donc écouter sur
