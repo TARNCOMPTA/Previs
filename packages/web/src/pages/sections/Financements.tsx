@@ -8,10 +8,11 @@ import {
   type Emprunt,
   type Subvention,
 } from '@previs/core';
-import { useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { ChampMontant, ChampNombre, ChampTaux, ChampTexte, Interrupteur, Selecteur } from '../../ui/champs.js';
 import { Bandeau, CarteIndicateur, Modale } from '../../ui/divers.js';
 import { GrilleLignes, type Colonne } from '../../ui/grille.js';
+import { useDossier } from '../../store/dossier.js';
 import { AvecDossier, BlocGrille, EnTeteSection, RangeeIndicateurs, type ContexteSection } from './commun.js';
 
 const TYPES_APPORT = Object.entries(LIBELLES_TYPE_APPORT).map(([valeur, libelle]) => ({
@@ -33,14 +34,25 @@ function CorpsFinancements({ dossier, resultats, annees, modifierLigne, ajouterL
   const ecart = plan ? plan.ressources.total - plan.besoins.total : 0;
   const tableaux = new Map(resultats.emprunts.map((t) => [t.empruntId, t]));
 
-  const modifier = (liste: Parameters<typeof modifierLigne>[0]) => (id: string, champs: Record<string, unknown>) =>
-    modifierLigne(liste, id, champs);
-  const majApport = modifier('financements.apports');
-  const majEmprunt = modifier('financements.emprunts');
-  const majSubvention = modifier('financements.subventions');
-  const majCreditBail = modifier('financements.creditsBaux');
+  /* Stables : ce sont elles que capturent les fonctions de rendu des colonnes mémoïsées. */
+  const majApport = useCallback(
+    (id: string, champs: Record<string, unknown>) => modifierLigne('financements.apports', id, champs),
+    [modifierLigne],
+  );
+  const majEmprunt = useCallback(
+    (id: string, champs: Record<string, unknown>) => modifierLigne('financements.emprunts', id, champs),
+    [modifierLigne],
+  );
+  const majSubvention = useCallback(
+    (id: string, champs: Record<string, unknown>) => modifierLigne('financements.subventions', id, champs),
+    [modifierLigne],
+  );
+  const majCreditBail = useCallback(
+    (id: string, champs: Record<string, unknown>) => modifierLigne('financements.creditsBaux', id, champs),
+    [modifierLigne],
+  );
 
-  const colonnesApports: Array<Colonne<Apport>> = [
+  const colonnesApports = useMemo<Array<Colonne<Apport>>>(() => [
     {
       cle: 'libelle',
       entete: 'Libellé',
@@ -89,9 +101,9 @@ function CorpsFinancements({ dossier, resultats, annees, modifierLigne, ajouterL
       largeur: 68,
       rendu: (a) => <ChampNombre valeur={a.mois} min={1} max={24} onChange={(v) => majApport(a.id, { mois: v })} />,
     },
-  ];
+  ], [annees, majApport]);
 
-  const colonnesEmprunts: Array<Colonne<Emprunt>> = [
+  const colonnesEmprunts = useMemo<Array<Colonne<Emprunt>>>(() => [
     {
       cle: 'libelle',
       entete: 'Emprunt',
@@ -140,24 +152,13 @@ function CorpsFinancements({ dossier, resultats, annees, modifierLigne, ajouterL
       cle: 'mensualite',
       entete: 'Mensualité',
       largeur: 104,
-      rendu: (e) => (
-        <span className="discret nombres">{formaterEuros(tableaux.get(e.id)?.mensualite ?? 0, 2)}</span>
-      ),
-      total: (e) => tableaux.get(e.id)?.mensualite ?? 0,
+      rendu: (e) => <ChiffreEmprunt empruntId={e.id} quoi="mensualite" />,
     },
     {
       cle: 'cout',
       entete: 'Coût du crédit',
       largeur: 110,
-      rendu: (e) => {
-        const t = tableaux.get(e.id);
-        const cout = t ? t.echeances.reduce((s, x) => s + x.interets + x.assurance, 0) : 0;
-        return <span className="discret nombres">{formaterEuros(cout)}</span>;
-      },
-      total: (e) => {
-        const t = tableaux.get(e.id);
-        return t ? t.echeances.reduce((s, x) => s + x.interets + x.assurance, 0) : 0;
-      },
+      rendu: (e) => <ChiffreEmprunt empruntId={e.id} quoi="cout" />,
     },
     {
       cle: 'tableau',
@@ -169,9 +170,22 @@ function CorpsFinancements({ dossier, resultats, annees, modifierLigne, ajouterL
         </button>
       ),
     },
-  ];
+  ], [annees, majEmprunt]);
 
-  const colonnesSubventions: Array<Colonne<Subvention>> = [
+  /*
+   * Mensualité et coût du crédit viennent des tableaux d'amortissement du moteur :
+   * recalculés à chaque rendu, hors des colonnes mémoïsées.
+   */
+  const totauxEmprunts: Record<string, number> = {
+    montant: dossier.financements.emprunts.reduce((t, e) => t + (e.actif ? e.montant : 0), 0),
+    mensualite: resultats.emprunts.reduce((t, x) => t + x.mensualite, 0),
+    cout: resultats.emprunts.reduce(
+      (t, x) => t + x.echeances.reduce((s, y) => s + y.interets + y.assurance, 0),
+      0,
+    ),
+  };
+
+  const colonnesSubventions = useMemo<Array<Colonne<Subvention>>>(() => [
     {
       cle: 'libelle',
       entete: 'Subvention',
@@ -236,9 +250,9 @@ function CorpsFinancements({ dossier, resultats, annees, modifierLigne, ajouterL
         />
       ),
     },
-  ];
+  ], [annees, majSubvention]);
 
-  const colonnesCreditsBaux: Array<Colonne<CreditBail>> = [
+  const colonnesCreditsBaux = useMemo<Array<Colonne<CreditBail>>>(() => [
     {
       cle: 'libelle',
       entete: 'Contrat',
@@ -285,7 +299,7 @@ function CorpsFinancements({ dossier, resultats, annees, modifierLigne, ajouterL
         <ChampMontant valeur={c.valeurResiduelle} onChange={(v) => majCreditBail(c.id, { valeurResiduelle: v })} />
       ),
     },
-  ];
+  ], [annees, majCreditBail]);
 
   const emprunt = tableauOuvert ? dossier.financements.emprunts.find((e) => e.id === tableauOuvert) : null;
   const tableau = tableauOuvert ? tableaux.get(tableauOuvert) : null;
@@ -400,6 +414,7 @@ function CorpsFinancements({ dossier, resultats, annees, modifierLigne, ajouterL
       >
         <GrilleLignes
           colonnes={colonnesEmprunts}
+          totauxFrais={totauxEmprunts}
           lignes={dossier.financements.emprunts}
           cle={(e) => e.id}
           estProposee={(e) => e.origine === 'llm'}
@@ -594,4 +609,24 @@ function CorpsFinancements({ dossier, resultats, annees, modifierLigne, ajouterL
 /** Écran de saisie des financements : apports, emprunts, subventions, crédits-baux. */
 export default function Financements() {
   return <AvecDossier corps={CorpsFinancements} />;
+}
+
+/**
+ * Un chiffre du tableau d'amortissement d'un emprunt, lu directement du magasin.
+ *
+ * Mensualité et coût du crédit sont calculés par le moteur : une colonne mémoïsée en
+ * capturerait une version périmée. Le sélecteur rend un NOMBRE, donc la cellule ne se
+ * redessine que si son propre chiffre a bougé.
+ */
+function ChiffreEmprunt({ empruntId, quoi }: { empruntId: string; quoi: 'mensualite' | 'cout' }) {
+  const valeur = useDossier((e) => {
+    const t = e.resultats?.emprunts.find((x) => x.empruntId === empruntId);
+    if (!t) return 0;
+    return quoi === 'mensualite'
+      ? t.mensualite
+      : t.echeances.reduce((s, x) => s + x.interets + x.assurance, 0);
+  });
+  return (
+    <span className="discret nombres">{formaterEuros(valeur, quoi === 'mensualite' ? 2 : 0)}</span>
+  );
 }

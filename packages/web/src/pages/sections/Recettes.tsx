@@ -1,7 +1,9 @@
+import { useCallback, useMemo } from 'react';
 import { formaterEuros, formaterPourcentage, LIBELLES_NATURE_RECETTE, type LigneRecette } from '@previs/core';
 import { ChampMontant, ChampNombre, ChampTaux, ChampTexte, Interrupteur, Selecteur } from '../../ui/champs.js';
 import { CarteIndicateur, Graphique, RepartitionMensuelle } from '../../ui/divers.js';
 import { GrilleLignes, type Colonne } from '../../ui/grille.js';
+import { useDossier } from '../../store/dossier.js';
 import { AvecDossier, BlocGrille, EnTeteSection, RangeeIndicateurs, type ContexteSection } from './commun.js';
 
 const NATURES = Object.entries(LIBELLES_NATURE_RECETTE).map(([valeur, libelle]) => ({
@@ -26,13 +28,66 @@ const MODES = [
  */
 function CorpsRecettes({ dossier, resultats, annees, modifierLigne, ajouterLigne, supprimerLigne, dupliquerLigne, deplacerLigne }: ContexteSection) {
   const nbExercices = annees.length;
-  const maj = (id: string, champs: Record<string, unknown>) => modifierLigne('recettes.lignes', id, champs);
-  const detail = new Map(resultats.recettes.detail.map((d) => [d.ligneId, d]));
+  /* Stables : ce sont elles que capturent les fonctions de rendu des colonnes mémoïsées. */
+  const maj = useCallback(
+    (id: string, champs: Record<string, unknown>) => modifierLigne('recettes.lignes', id, champs),
+    [modifierLigne],
+  );
+  const supprimer = useCallback((l: LigneRecette) => supprimerLigne('recettes.lignes', l.id), [supprimerLigne]);
+  const dupliquer = useCallback((l: LigneRecette) => dupliquerLigne('recettes.lignes', l.id), [dupliquerLigne]);
+  const deplacer = useCallback(
+    (l: LigneRecette, sens: -1 | 1) => deplacerLigne('recettes.lignes', l.id, sens),
+    [deplacerLigne],
+  );
+  const proposee = useCallback((l: LigneRecette) => l.origine === 'llm', []);
+  const detailLigne = useCallback(
+    (l: LigneRecette) => (
+        <div className="pile">
+          <div className="grille-champs">
+            <ChampTaux libelle="Taux de TVA" valeur={l.tauxTva} onChange={(v) => maj(l.id, { tauxTva: v })} />
+            <ChampNombre
+              libelle="Délai d’encaissement (jours)"
+              valeur={l.delaiEncaissementJours ?? dossier.parametres.bfr.delaiClientsJours}
+              min={0}
+              max={365}
+              onChange={(v) => maj(l.id, { delaiEncaissementJours: v })}
+            />
+            <ChampTaux
+              libelle="Achats liés (% du CA)"
+              valeur={l.tauxAchatsLiesPourcent}
+              onChange={(v) => maj(l.id, { tauxAchatsLiesPourcent: v })}
+              aide="Génère automatiquement un achat consommé variable, pour le négoce ou la restauration."
+            />
+            {l.mode === 'volume_prix' || l.mode === 'capacite' ? (
+              <ChampTexte
+                libelle="Unité"
+                valeur={l.unite}
+                onChange={(v) => maj(l.id, { unite: v })}
+                placeholder="couverts, séances, heures…"
+              />
+            ) : null}
+            <ChampTexte
+              libelle="Note"
+              valeur={l.note ?? ''}
+              onChange={(v) => maj(l.id, { note: v || undefined })}
+            />
+            <Interrupteur libelle="Ligne active" valeur={l.actif} onChange={(v) => maj(l.id, { actif: v })} />
+          </div>
+          <RepartitionMensuelle
+            valeur={l.repartition}
+            onChange={(v) => maj(l.id, { repartition: v })}
+            nbExercices={nbExercices}
+          />
+        </div>
+    ),
+    [maj, annees],
+  );
   const ca = resultats.recettes.caParExercice;
   const croissance = ca.map((v, i) => (i === 0 || !ca[i - 1] ? 0 : ((v - ca[i - 1]) / ca[i - 1]) * 100));
 
   /** Les colonnes changent selon le mode de détermination choisi pour la ligne. */
-  const colonneMontant = (i: number): Colonne<LigneRecette> => ({
+  // Stable, sinon elle invalide « colonnes » à chaque rendu et la mémoïsation ne prend pas.
+  const colonneMontant = useCallback((i: number): Colonne<LigneRecette> => ({
     cle: `ex${i}`,
     entete: annees[i],
     largeur: 132,
@@ -100,9 +155,9 @@ function CorpsRecettes({ dossier, resultats, annees, modifierLigne, ajouterLigne
         </div>
       );
     },
-  });
+  }), [annees, maj]);
 
-  const colonnes: Array<Colonne<LigneRecette>> = [
+  const colonnes = useMemo<Array<Colonne<LigneRecette>>>(() => [
     {
       cle: 'libelle',
       entete: 'Activité',
@@ -129,12 +184,19 @@ function CorpsRecettes({ dossier, resultats, annees, modifierLigne, ajouterLigne
       cle: `ca${i}`,
       entete: `CA ${annee}`,
       largeur: 106,
-      rendu: (l: LigneRecette) => (
-        <span className="discret nombres">{formaterEuros(detail.get(l.id)?.montants[i] ?? 0)}</span>
-      ),
-      total: (l: LigneRecette) => detail.get(l.id)?.montants[i] ?? 0,
+      rendu: (l: LigneRecette) => <CaDeLaLigne ligneId={l.id} exercice={i} />,
     })),
-  ];
+  ], [annees, maj, colonneMontant]);
+
+  /*
+   * Les chiffres d'affaires viennent du moteur — une recette saisie en quantité fois prix
+   * n'a pas de montant dans la ligne — et sont donc recalculés à chaque rendu, hors des
+   * colonnes mémoïsées : une fonction mémoïsée capturerait des résultats périmés.
+   */
+  const totauxCa: Record<string, number> = {};
+  annees.forEach((_, i) => {
+    totauxCa[`ca${i}`] = resultats.recettes.detail.reduce((t, d) => t + (d.montants[i] ?? 0), 0);
+  });
 
   const caMensuel = resultats.recettes.caMensuel;
 
@@ -183,51 +245,14 @@ function CorpsRecettes({ dossier, resultats, annees, modifierLigne, ajouterLigne
           colonnes={colonnes}
           lignes={dossier.recettes.lignes}
           cle={(l) => l.id}
-          estProposee={(l) => l.origine === 'llm'}
-          onSupprimer={(l) => supprimerLigne('recettes.lignes', l.id)}
-          onDupliquer={(l) => dupliquerLigne('recettes.lignes', l.id)}
-          onDeplacer={(l, sens) => deplacerLigne('recettes.lignes', l.id, sens)}
+          totauxFrais={totauxCa}
+          estProposee={proposee}
+          onSupprimer={supprimer}
+          onDupliquer={dupliquer}
+          onDeplacer={deplacer}
           messageVide="Aucune activité saisie. Sans chiffre d’affaires, tous les états restent à zéro."
           libelleTotal="Total du chiffre d’affaires"
-          detail={(l) => (
-            <div className="pile">
-              <div className="grille-champs">
-                <ChampTaux libelle="Taux de TVA" valeur={l.tauxTva} onChange={(v) => maj(l.id, { tauxTva: v })} />
-                <ChampNombre
-                  libelle="Délai d’encaissement (jours)"
-                  valeur={l.delaiEncaissementJours ?? dossier.parametres.bfr.delaiClientsJours}
-                  min={0}
-                  max={365}
-                  onChange={(v) => maj(l.id, { delaiEncaissementJours: v })}
-                />
-                <ChampTaux
-                  libelle="Achats liés (% du CA)"
-                  valeur={l.tauxAchatsLiesPourcent}
-                  onChange={(v) => maj(l.id, { tauxAchatsLiesPourcent: v })}
-                  aide="Génère automatiquement un achat consommé variable, pour le négoce ou la restauration."
-                />
-                {l.mode === 'volume_prix' || l.mode === 'capacite' ? (
-                  <ChampTexte
-                    libelle="Unité"
-                    valeur={l.unite}
-                    onChange={(v) => maj(l.id, { unite: v })}
-                    placeholder="couverts, séances, heures…"
-                  />
-                ) : null}
-                <ChampTexte
-                  libelle="Note"
-                  valeur={l.note ?? ''}
-                  onChange={(v) => maj(l.id, { note: v || undefined })}
-                />
-                <Interrupteur libelle="Ligne active" valeur={l.actif} onChange={(v) => maj(l.id, { actif: v })} />
-              </div>
-              <RepartitionMensuelle
-                valeur={l.repartition}
-                onChange={(v) => maj(l.id, { repartition: v })}
-                nbExercices={nbExercices}
-              />
-            </div>
-          )}
+          detail={detailLigne}
           actions={
             <>
               <button
@@ -305,4 +330,18 @@ function seriesParActivite(resultats: {
     ...principales.map((d) => ({ nom: d.libelle, valeurs: d.montants })),
     { nom: `${reste.length} autres activités`, valeurs: cumul },
   ];
+}
+
+/**
+ * Le chiffre d'affaires d'une ligne de recette, lu directement du magasin.
+ *
+ * Comme le coût du personnel : une cellule qui affiche un chiffre calculé ne peut pas vivre
+ * dans une colonne mémoïsée sans risquer d'afficher une valeur périmée. Le sélecteur rend un
+ * NOMBRE, donc la cellule ne se redessine que si son propre chiffre a bougé.
+ */
+function CaDeLaLigne({ ligneId, exercice }: { ligneId: string; exercice: number }) {
+  const montant = useDossier(
+    (e) => e.resultats?.recettes.detail.find((d) => d.ligneId === ligneId)?.montants[exercice] ?? 0,
+  );
+  return <span className="discret nombres">{formaterEuros(montant)}</span>;
 }

@@ -1,3 +1,4 @@
+import { useCallback, useMemo } from 'react';
 import {
   formaterEuros,
   LIBELLES_CATEGORIE_INVESTISSEMENT,
@@ -7,6 +8,7 @@ import {
 import { ChampMontant, ChampNombre, ChampTaux, ChampTexte, Interrupteur, Selecteur } from '../../ui/champs.js';
 import { CarteIndicateur, Bandeau } from '../../ui/divers.js';
 import { GrilleLignes, type Colonne } from '../../ui/grille.js';
+import { useDossier } from '../../store/dossier.js';
 import { AvecDossier, BlocGrille, EnTeteSection, RangeeIndicateurs, type ContexteSection } from './commun.js';
 
 const CATEGORIES = Object.entries(LIBELLES_CATEGORIE_INVESTISSEMENT).map(([valeur, libelle]) => ({
@@ -30,8 +32,20 @@ const MODES = [
  */
 function CorpsInvestissements({ dossier, resultats, annees, modifierLigne, ajouterLigne, supprimerLigne, dupliquerLigne, deplacerLigne }: ContexteSection) {
   const lignes = dossier.investissements.lignes;
-  const emprunts = dossier.financements.emprunts.filter((e) => e.actif);
-  const plans = new Map(resultats.amortissements.map((p) => [p.investissementId, p]));
+  /*
+   * Stabilisé sur son CONTENU : « filter » rend un tableau neuf à chaque rendu, ce qui
+   * invaliderait « colonnes » à chaque frappe et annulerait la mémoïsation des lignes. La
+   * liste des emprunts, elle, ne change que si un emprunt est ajouté, retiré ou renommé.
+   */
+  const signatureEmprunts = dossier.financements.emprunts
+    .filter((e) => e.actif)
+    .map((e) => `${e.id}\u0001${e.libelle}`)
+    .join('\u0002');
+  const emprunts = useMemo(
+    () => dossier.financements.emprunts.filter((e) => e.actif),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- la signature porte le contenu
+    [signatureEmprunts],
+  );
 
   const totalInvesti = lignes
     .filter((l) => l.actif && l.categorie !== 'tresorerie_demarrage')
@@ -44,10 +58,83 @@ function CorpsInvestissements({ dossier, resultats, annees, modifierLigne, ajout
     .filter((l) => l.actif && l.financeParEmpruntId)
     .reduce((t, l) => t + l.montantHT, 0);
 
-  const majuscule = (id: string, champs: Record<string, unknown>) =>
-    modifierLigne('investissements.lignes', id, champs);
+  /* Stables : ce sont elles que capturent les fonctions de rendu des colonnes mémoïsées. */
+  const majuscule = useCallback(
+    (id: string, champs: Record<string, unknown>) => modifierLigne('investissements.lignes', id, champs),
+    [modifierLigne],
+  );
+  const supprimerImmo = useCallback(
+    (l: LigneInvestissement) => supprimerLigne('investissements.lignes', l.id),
+    [supprimerLigne],
+  );
+  const dupliquerImmo = useCallback(
+    (l: LigneInvestissement) => dupliquerLigne('investissements.lignes', l.id),
+    [dupliquerLigne],
+  );
+  const deplacerImmo = useCallback(
+    (l: LigneInvestissement, sens: -1 | 1) => deplacerLigne('investissements.lignes', l.id, sens),
+    [deplacerLigne],
+  );
+  const immoProposee = useCallback((l: LigneInvestissement) => l.origine === 'llm', []);
+  const detailImmo = useCallback(
+    (l: LigneInvestissement) => (
+        <div className="grille-champs">
+          <ChampTaux
+            libelle="Taux de TVA"
+            valeur={l.tauxTva}
+            onChange={(v) => majuscule(l.id, { tauxTva: v })}
+          />
+          <Interrupteur
+            libelle="TVA récupérable"
+            valeur={l.tvaRecuperable}
+            onChange={(v) => majuscule(l.id, { tvaRecuperable: v })}
+            aide="À décocher pour un véhicule de tourisme."
+          />
+          <ChampMontant
+            libelle="Valeur résiduelle non amortie"
+            valeur={l.valeurResiduelle}
+            onChange={(v) => majuscule(l.id, { valeurResiduelle: v })}
+            aide="Part non amortissable, un terrain par exemple."
+          />
+          <ChampNombre
+            libelle="Échelonnement du règlement (mois)"
+            valeur={l.echelonnementMois}
+            min={1}
+            max={36}
+            onChange={(v) => majuscule(l.id, { echelonnementMois: v })}
+          />
+          <Selecteur
+            libelle="Financé par l’emprunt"
+            valeur={l.financeParEmpruntId ?? ''}
+            onChange={(v) => majuscule(l.id, { financeParEmpruntId: v || undefined })}
+            options={[
+              { valeur: '', libelle: '— aucun —' },
+              ...emprunts.map((e) => ({ valeur: e.id, libelle: e.libelle })),
+            ]}
+          />
+          <ChampTexte
+            libelle="Compte du plan comptable"
+            valeur={l.compte ?? ''}
+            onChange={(v) => majuscule(l.id, { compte: v || undefined })}
+            placeholder="2183"
+          />
+          <ChampTexte
+            libelle="Note"
+            valeur={l.note ?? ''}
+            onChange={(v) => majuscule(l.id, { note: v || undefined })}
+          />
+          <Interrupteur
+            libelle="Ligne active"
+            valeur={l.actif}
+            onChange={(v) => majuscule(l.id, { actif: v })}
+            aide="Une ligne désactivée reste visible mais sort de tous les calculs."
+          />
+        </div>
+    ),
+    [majuscule, annees, emprunts],
+  );
 
-  const colonnes: Array<Colonne<LigneInvestissement>> = [
+  const colonnes = useMemo<Array<Colonne<LigneInvestissement>>>(() => [
     {
       cle: 'libelle',
       entete: 'Désignation',
@@ -130,12 +217,18 @@ function CorpsInvestissements({ dossier, resultats, annees, modifierLigne, ajout
       cle: `dot${i}`,
       entete: `Dotation ${annee}`,
       largeur: 104,
-      rendu: (l: LigneInvestissement) => (
-        <span className="discret nombres">{formaterEuros(plans.get(l.id)?.dotations[i] ?? 0)}</span>
-      ),
-      total: (l: LigneInvestissement) => plans.get(l.id)?.dotations[i] ?? 0,
+      rendu: (l: LigneInvestissement) => <DotationDeLigne investissementId={l.id} exercice={i} />,
     })),
-  ];
+  ], [annees, majuscule, emprunts]);
+
+  /*
+   * Les dotations viennent du plan d'amortissement calculé par le moteur : recalculées à
+   * chaque rendu, hors des colonnes mémoïsées, qui capteraient sinon un plan périmé.
+   */
+  const totauxDotations: Record<string, number> = {};
+  annees.forEach((_, i) => {
+    totauxDotations[`dot${i}`] = resultats.amortissements.reduce((t, p) => t + (p.dotations[i] ?? 0), 0);
+  });
 
   const cessions = dossier.investissements.cessions;
   const colonnesCessions: Array<Colonne<Cession>> = [
@@ -241,66 +334,14 @@ function CorpsInvestissements({ dossier, resultats, annees, modifierLigne, ajout
           colonnes={colonnes}
           lignes={lignes}
           cle={(l) => l.id}
-          estProposee={(l) => l.origine === 'llm'}
-          onSupprimer={(l) => supprimerLigne('investissements.lignes', l.id)}
-          onDupliquer={(l) => dupliquerLigne('investissements.lignes', l.id)}
-          onDeplacer={(l, sens) => deplacerLigne('investissements.lignes', l.id, sens)}
+          totauxFrais={totauxDotations}
+          estProposee={immoProposee}
+          onSupprimer={supprimerImmo}
+          onDupliquer={dupliquerImmo}
+          onDeplacer={deplacerImmo}
           messageVide="Aucun investissement saisi. Ajouter une immobilisation pour démarrer."
           libelleTotal="Total des investissements"
-          detail={(l) => (
-            <div className="grille-champs">
-              <ChampTaux
-                libelle="Taux de TVA"
-                valeur={l.tauxTva}
-                onChange={(v) => majuscule(l.id, { tauxTva: v })}
-              />
-              <Interrupteur
-                libelle="TVA récupérable"
-                valeur={l.tvaRecuperable}
-                onChange={(v) => majuscule(l.id, { tvaRecuperable: v })}
-                aide="À décocher pour un véhicule de tourisme."
-              />
-              <ChampMontant
-                libelle="Valeur résiduelle non amortie"
-                valeur={l.valeurResiduelle}
-                onChange={(v) => majuscule(l.id, { valeurResiduelle: v })}
-                aide="Part non amortissable, un terrain par exemple."
-              />
-              <ChampNombre
-                libelle="Échelonnement du règlement (mois)"
-                valeur={l.echelonnementMois}
-                min={1}
-                max={36}
-                onChange={(v) => majuscule(l.id, { echelonnementMois: v })}
-              />
-              <Selecteur
-                libelle="Financé par l’emprunt"
-                valeur={l.financeParEmpruntId ?? ''}
-                onChange={(v) => majuscule(l.id, { financeParEmpruntId: v || undefined })}
-                options={[
-                  { valeur: '', libelle: '— aucun —' },
-                  ...emprunts.map((e) => ({ valeur: e.id, libelle: e.libelle })),
-                ]}
-              />
-              <ChampTexte
-                libelle="Compte du plan comptable"
-                valeur={l.compte ?? ''}
-                onChange={(v) => majuscule(l.id, { compte: v || undefined })}
-                placeholder="2183"
-              />
-              <ChampTexte
-                libelle="Note"
-                valeur={l.note ?? ''}
-                onChange={(v) => majuscule(l.id, { note: v || undefined })}
-              />
-              <Interrupteur
-                libelle="Ligne active"
-                valeur={l.actif}
-                onChange={(v) => majuscule(l.id, { actif: v })}
-                aide="Une ligne désactivée reste visible mais sort de tous les calculs."
-              />
-            </div>
-          )}
+          detail={detailImmo}
           actions={
             <>
               <button
@@ -394,4 +435,18 @@ function CorpsInvestissements({ dossier, resultats, annees, modifierLigne, ajout
 
 export default function Investissements() {
   return <AvecDossier corps={CorpsInvestissements} />;
+}
+
+/**
+ * La dotation aux amortissements d'une immobilisation, lue directement du magasin.
+ *
+ * Elle vient du plan d'amortissement calculé par le moteur : une colonne mémoïsée en
+ * capturerait une version périmée, et une dotation périmée est un chiffre faux.
+ */
+function DotationDeLigne({ investissementId, exercice }: { investissementId: string; exercice: number }) {
+  const dotation = useDossier(
+    (e) =>
+      e.resultats?.amortissements.find((p) => p.investissementId === investissementId)?.dotations[exercice] ?? 0,
+  );
+  return <span className="discret nombres">{formaterEuros(dotation)}</span>;
 }
