@@ -76,21 +76,26 @@ if [[ "$DEPOT" != "$RACINE" ]]; then
 fi
 
 # La résolution DNS conditionne l'émission du certificat : autant s'en assurer avant.
+# En simulation, rien n'est émis : un problème est signalé, il n'arrête pas l'inventaire.
 if [[ $SANS_TLS -eq 0 ]]; then
+  if [[ $SIMULATION -eq 1 ]]; then bloquant() { avert "$@"; }; else bloquant() { mauvais "$@"; }; fi
+
   IP_PUBLIQUE="$(curl -fsS --max-time 10 https://api.ipify.org 2>/dev/null || true)"
   IP_DOMAINE="$(getent ahostsv4 "$DOMAINE" 2>/dev/null | awk 'NR==1{print $1}' || true)"
   if [[ -z "$IP_DOMAINE" ]]; then
-    mauvais "$DOMAINE ne résout pas. Créer l'enregistrement A vers ce serveur, attendre la propagation, puis relancer.
+    bloquant "$DOMAINE ne résout pas. Créer l'enregistrement A vers ce serveur, attendre la propagation, puis relancer.
   Relancer sans certificat : $0 --sans-tls"
-  fi
-  if [[ -n "$IP_PUBLIQUE" && "$IP_DOMAINE" != "$IP_PUBLIQUE" ]]; then
-    mauvais "$DOMAINE pointe vers $IP_DOMAINE, alors que ce serveur est en $IP_PUBLIQUE.
+  elif [[ -n "$IP_PUBLIQUE" && "$IP_DOMAINE" != "$IP_PUBLIQUE" ]]; then
+    bloquant "$DOMAINE pointe vers $IP_DOMAINE, alors que ce serveur est en $IP_PUBLIQUE.
   Corriger l'enregistrement A avant de poursuivre — Let's Encrypt refuserait le certificat."
+  else
+    ok "$DOMAINE → $IP_DOMAINE (ce serveur)"
   fi
-  ok "$DOMAINE → $IP_DOMAINE (ce serveur)"
 
+  # Le courriel ne sert qu'à l'émission du certificat : il n'est pas requis pour
+  # dresser l'inventaire du serveur.
   if [[ -z "$COURRIEL" ]]; then
-    mauvais "L'adresse de notification Let's Encrypt est obligatoire : --courriel contact@tarncompta.fr"
+    bloquant "L'adresse de notification Let's Encrypt est obligatoire : --courriel contact@tarncompta.fr"
   fi
 fi
 
@@ -337,6 +342,30 @@ if [[ -z "$CHROMIUM" ]]; then
   CHROMIUM="$(trouver_chromium || true)"
 fi
 [[ -n "$CHROMIUM" ]] || mauvais "Chromium reste introuvable : le PDF ne pourrait pas être produit."
+
+# `playwright install-deps` s'appuie sur une table de noms de version ; sur une
+# distribution trop récente il ne reconnaît rien et n'installe rien. On vérifie donc
+# que le binaire démarre, et à défaut on pose les bibliothèques de rendu nommément.
+if ! "$CHROMIUM" --headless=new --no-sandbox --disable-gpu --dump-dom about:blank >/dev/null 2>&1; then
+  avert "Chromium ne démarre pas encore : installation des bibliothèques de rendu."
+  BIBLIOTHEQUES=""
+  for paquet in libnss3 libnspr4 libatk1.0-0t64 libatk1.0-0 libatk-bridge2.0-0t64 \
+                libatk-bridge2.0-0 libcups2t64 libcups2 libdrm2 libxkbcommon0 \
+                libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 \
+                libasound2t64 libasound2 libpango-1.0-0 libcairo2 libx11-xcb1; do
+    # Les paquets à suffixe t64 ont remplacé les anciens : on ne demande que ceux
+    # que la distribution connaît réellement.
+    if ! dpkg -s "$paquet" >/dev/null 2>&1 && apt-cache show "$paquet" >/dev/null 2>&1; then
+      BIBLIOTHEQUES="$BIBLIOTHEQUES $paquet"
+    fi
+  done
+  if [[ -n "${BIBLIOTHEQUES// }" ]]; then
+    # shellcheck disable=SC2086
+    apt-get install -y -qq --no-install-recommends $BIBLIOTHEQUES >/dev/null 2>&1 || true
+    ok "Bibliothèques de rendu ajoutées :${BIBLIOTHEQUES}"
+  fi
+fi
+
 ok "Chromium : $CHROMIUM ($("$CHROMIUM" --version 2>/dev/null | head -1))"
 
 # ─── Configuration ────────────────────────────────────────────────────────────
