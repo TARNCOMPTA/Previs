@@ -24,6 +24,7 @@ COURRIEL="${COURRIEL:-}"
 RACINE="${RACINE:-/opt/previs}"
 BOOTSTRAP_COURRIEL="${BOOTSTRAP_COURRIEL:-aymeric@tarncompta.fr}"
 NOM_VHOST="${NOM_VHOST:-previs}"
+ADOPTER_VHOST=0
 # Marque apposée dans les fichiers que ce script écrit : elle seule l'autorise à
 # les réécrire. Tout fichier qui ne la porte pas appartient à quelqu'un d'autre.
 MARQUE="# Généré par Previs — deploy/installer.sh. Ne pas modifier à la main."
@@ -42,6 +43,7 @@ while [[ $# -gt 0 ]]; do
     --courriel) COURRIEL="$2"; shift 2 ;;
     --compte) BOOTSTRAP_COURRIEL="$2"; shift 2 ;;
     --nom-vhost) NOM_VHOST="$2"; shift 2 ;;
+    --adopter-vhost) ADOPTER_VHOST=1; shift ;;
     --branche) BRANCHE="$2"; shift 2 ;;
     --racine) RACINE="$2"; shift 2 ;;
     --port) PORT_INTERNE="$2"; shift 2 ;;
@@ -213,14 +215,28 @@ ok "Previs écoutera sur 127.0.0.1:$PORT_INTERNE, jamais exposé directement"
 if [[ $SIMULATION -eq 1 ]]; then obstacle() { avert "$@"; }; else obstacle() { mauvais "$@"; }; fi
 
 VHOST="/etc/nginx/sites-available/$NOM_VHOST"
-if [[ -f "$VHOST" ]] && ! grep -qF "$MARQUE" "$VHOST"; then
+if [[ ! -f "$VHOST" ]] || grep -qF "$MARQUE" "$VHOST"; then
+  ok "Hôte virtuel à écrire : $VHOST"
+elif [[ $ADOPTER_VHOST -eq 1 ]]; then
+  avert "Hôte virtuel $VHOST repris sur demande explicite (--adopter-vhost)."
+elif grep -qF 'location /.well-known/acme-challenge/ { root /var/www/certbot; }' "$VHOST" \
+     && grep -qE "^[[:space:]]*server_name[[:space:]]+$DOMAINE;" "$VHOST" \
+     && grep -qE 'proxy_pass http://127\.0\.0\.1:[0-9]+;' "$VHOST"; then
+  # Les versions antérieures de ce script n'apposaient pas encore de marque. Leur
+  # hôte virtuel de phase 1 est reconnaissable, mais on ne l'écrase pas de soi-même :
+  # c'est à l'exploitant de confirmer qu'il n'a pas d'autre origine.
+  obstacle "$VHOST ressemble à l'hôte virtuel de phase 1 qu'une version antérieure de cet
+    installateur écrivait — même domaine, même défi ACME, même mandataire local. Il ne porte
+    pas encore la marque introduite depuis, donc le script ne le réécrit pas de lui-même.
+    Le vérifier :  sudo cat $VHOST
+    S'il vient bien d'une installation antérieure de Previs, le reprendre :
+                   $0 --adopter-vhost …"
+else
   obstacle "$VHOST existe déjà et n'a pas été écrit par cet installateur.
     L'écraser mettrait hors service le site qu'il dessert.
     L'examiner :   sudo cat $VHOST
     Puis soit le retirer, soit installer sous un autre nom :
                    $0 --nom-vhost previs-financier …"
-else
-  ok "Hôte virtuel à écrire : $VHOST"
 fi
 
 AUTRE="$(grep -rlE "^[[:space:]]*server_name([[:space:]]|.*[[:space:]])$DOMAINE[[:space:];]" \
