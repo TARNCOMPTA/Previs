@@ -1,6 +1,6 @@
 import type { CreditBail, Emprunt, PeriodiciteEmprunt } from '../model/financements.js';
 import type { Dossier } from '../model/dossier.js';
-import { exercicePourMois, moisAbsolu, nbMoisTotal } from './periodes.js';
+import { dansHorizon, exercicePourMois, moisAbsolu, moisAbsoluDansHorizon, nbMoisTotal } from './periodes.js';
 import type { AmortissementEmprunt, EcheanceEmprunt, Exercice } from './types.js';
 import { euro, pct, zeros } from './utils.js';
 
@@ -44,6 +44,9 @@ export function tableauAmortissement(
     parExercice,
   };
   if (!emprunt.actif || emprunt.montant <= 0 || emprunt.dureeMois <= 0) return vide;
+  // Un emprunt débloqué sur un exercice qui n'existe pas n'a pas de tableau : le rendre vide
+  // plutôt que de le décaler sur le dernier exercice, où il fausserait la trésorerie.
+  if (!dansHorizon(exercices, emprunt.exerciceDeblocage)) return vide;
 
   const p = moisParPeriode(emprunt.periodicite);
   const tauxPeriode = pct(emprunt.tauxAnnuel) * (p / 12);
@@ -171,7 +174,10 @@ export function calculerFluxEmprunts(
 
   for (const emprunt of dossier.financements.emprunts) {
     if (!emprunt.actif || emprunt.montant <= 0) continue;
-    const mois = moisAbsolu(exercices, emprunt.exerciceDeblocage, emprunt.moisDeblocage);
+    // Même dissymétrie que pour les cessions : le déblocage part sur le dernier exercice
+    // alors que « deblocagesParExercice » l'écrit hors du tableau. Ni l'un ni l'autre.
+    const mois = moisAbsoluDansHorizon(exercices, emprunt.exerciceDeblocage, emprunt.moisDeblocage);
+    if (mois === null) continue;
     if (mois < horizon) {
       flux.deblocages[mois] += emprunt.montant;
       const frais = euro(emprunt.fraisDossier + emprunt.fraisGarantie);
@@ -245,7 +251,8 @@ export function calculerCreditsBaux(
 
   for (const cb of dossier.financements.creditsBaux as CreditBail[]) {
     if (!cb.actif || cb.loyerMensuelHT <= 0) continue;
-    const debut = moisAbsolu(exercices, cb.exerciceDebut, cb.moisDebut);
+    const debut = moisAbsoluDansHorizon(exercices, cb.exerciceDebut, cb.moisDebut);
+    if (debut === null) continue;
     const tvaLoyer = assujetti ? euro(cb.loyerMensuelHT * pct(cb.tauxTva)) : 0;
 
     for (let k = 0; k < cb.dureeMois; k++) {

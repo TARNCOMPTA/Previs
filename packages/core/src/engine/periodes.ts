@@ -89,12 +89,49 @@ export function libellesMois(parametres: Parametres, exercices: readonly Exercic
   return out;
 }
 
-/** Convertit un couple (exercice, mois dans l'exercice, 1-based) en index de mois absolu. */
+/**
+ * Convertit un couple (exercice, mois dans l'exercice, 1-based) en index de mois absolu.
+ *
+ * L'index d'exercice est **ramené** dans l'horizon. Cette tolérance est un piège quand la
+ * ligne, elle, alimente aussi un tableau indexé par exercice : le flux part sur le dernier
+ * exercice tandis que l'écriture comptable est perdue, et le bilan se déséquilibre du montant
+ * exact. Pour tout ce qui a une contrepartie par exercice, employer « moisAbsoluDansHorizon »,
+ * qui rend « null » plutôt que de déplacer la ligne.
+ */
 export function moisAbsolu(exercices: readonly Exercice[], exercice: number, mois: number): number {
   const e = exercices[Math.max(0, Math.min(exercice, exercices.length - 1))];
   if (!e) return 0;
   const dans = Math.max(1, Math.min(mois, e.nbMois));
   return e.moisDebutAbsolu + (dans - 1);
+}
+
+/**
+ * Comme « moisAbsolu », mais rend « null » si l'exercice visé n'existe pas.
+ *
+ * C'est la forme à employer partout : une ligne datée d'un exercice au-delà de l'horizon du
+ * dossier — le cas d'un utilisateur qui réduit le nombre d'exercices — ne doit alors produire
+ * NI flux NI écriture. Un « null » que le compilateur oblige à traiter valait mieux qu'un
+ * index silencieusement déplacé : c'est cette tolérance qui déséquilibrait le bilan.
+ *
+ * Le mois dans l'exercice, lui, reste borné : un mois 14 d'un exercice de douze est une
+ * saisie à corriger, pas une ligne à faire disparaître, et le contrôle de cohérence
+ * « lignes_hors_horizon » ne s'occupe que de l'exercice.
+ */
+export function moisAbsoluDansHorizon(
+  exercices: readonly Exercice[],
+  exercice: number,
+  mois: number,
+): number | null {
+  if (!Number.isInteger(exercice) || exercice < 0 || exercice >= exercices.length) return null;
+  const e = exercices[exercice];
+  if (!e) return null;
+  const dans = Math.max(1, Math.min(mois, e.nbMois));
+  return e.moisDebutAbsolu + (dans - 1);
+}
+
+/** Vrai si l'exercice visé existe dans le dossier. */
+export function dansHorizon(exercices: readonly Exercice[], exercice: number): boolean {
+  return Number.isInteger(exercice) && exercice >= 0 && exercice < exercices.length;
 }
 
 /** Exercice auquel appartient un mois absolu. Renvoie -1 au-delà de l'horizon. */

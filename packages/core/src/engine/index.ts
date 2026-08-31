@@ -31,7 +31,7 @@ import {
   planAmortissement,
 } from './immobilisations.js';
 import { cotisationsExploitant, calculerTva, echeancierImpot, impotSocietes } from './fiscal.js';
-import { construireExercices, libellesMois, nbMoisTotal } from './periodes.js';
+import { construireExercices, dansHorizon, libellesMois, nbMoisTotal } from './periodes.js';
 import { decalerSerie, repartirSurCalendrier } from './repartition.js';
 import type {
   Bfr,
@@ -765,6 +765,43 @@ export function calculer(dossierEntree: Dossier): Resultats {
   });
 
   // ─── Contrôles et anomalies ─────────────────────────────────────────────────
+  /*
+   * Les lignes datées d'un exercice qui n'existe pas.
+   *
+   * Le moteur les ignore, sans quoi le bilan se déséquilibre : la trésorerie partirait sur le
+   * dernier exercice, l'index d'exercice étant ramené, tandis que l'écriture indexée par
+   * exercice tomberait hors du tableau. Elles se comptent ici pour que le contrôle les nomme :
+   * une donnée saisie sans effet doit se voir.
+   */
+  const lignesHorsHorizon: { section: string; libelle: string; exercice: number }[] = [];
+  const releverHorsHorizon = (
+    section: string,
+    lignes: readonly { actif: boolean; libelle: string }[],
+    exerciceDe: (l: never) => number,
+  ) => {
+    for (const l of lignes) {
+      if (!l.actif) continue;
+      const i = exerciceDe(l as never);
+      if (!dansHorizon(exercices, i)) {
+        lignesHorsHorizon.push({ section, libelle: l.libelle, exercice: i });
+      }
+    }
+  };
+  releverHorsHorizon('investissements', dossier.investissements.lignes, (l: { exercice: number }) => l.exercice);
+  releverHorsHorizon('cessions', dossier.investissements.cessions, (l: { exercice: number }) => l.exercice);
+  releverHorsHorizon('apports', dossier.financements.apports, (l: { exercice: number }) => l.exercice);
+  releverHorsHorizon('subventions', dossier.financements.subventions, (l: { exercice: number }) => l.exercice);
+  releverHorsHorizon(
+    'emprunts',
+    dossier.financements.emprunts,
+    (l: { exerciceDeblocage: number }) => l.exerciceDeblocage,
+  );
+  releverHorsHorizon(
+    'crédits-baux',
+    dossier.financements.creditsBaux,
+    (l: { exerciceDebut: number }) => l.exerciceDebut,
+  );
+
   const capaciteRemboursement = ratios.find((r) => r.code === 'capacite_remboursement')?.valeurs ?? [];
   const controles = construireControles({
     exercices,
@@ -783,6 +820,7 @@ export function calculer(dossierEntree: Dossier): Resultats {
     seuilAtteint: seuilRentabilite.map((s) => s.atteint),
     besoinsDemarrage: planFinancement[0]?.besoins.total ?? 0,
     ressourcesDemarrage: planFinancement[0]?.ressources.total ?? 0,
+    lignesHorsHorizon,
   });
 
   const anomalies: Anomalie[] = detecterAnomalies({

@@ -3,7 +3,7 @@ import { calculer } from '../src/engine/index.js';
 import { cotisationsExploitant, impotSocietes } from '../src/engine/fiscal.js';
 import { tableauAmortissement } from '../src/engine/emprunts.js';
 import { planAmortissement } from '../src/engine/immobilisations.js';
-import { construireExercices } from '../src/engine/periodes.js';
+import { construireExercices, moisAbsoluDansHorizon } from '../src/engine/periodes.js';
 import { dossierVide, normaliserDossier } from '../src/model/dossier.js';
 import { modeleDossier } from '../src/modeles/index.js';
 import { dossier, dossierComplet } from './aide.js';
@@ -319,6 +319,84 @@ describe('cohérence des états entre eux', () => {
     const vide = calculer(dossierVide());
     expect(vide.anomalies.some((a) => a.code === 'ca_absent')).toBe(true);
     expect(vide.anomalies.some((a) => a.code === 'identite_incomplete')).toBe(true);
+  });
+});
+
+describe('lignes hors de l’horizon du dossier', () => {
+  /*
+   * Le cas est atteignable depuis l'interface : il suffit de réduire le nombre d'exercices
+   * d'un dossier qui porte une cession, un apport ou un emprunt sur un exercice ultérieur.
+   *
+   * « moisAbsolu » ramenait alors l'index d'exercice dans l'horizon, si bien que la trésorerie
+   * partait sur le dernier exercice tandis que l'écriture indexée par exercice tombait hors du
+   * tableau : le bilan se déséquilibrait du montant exact de la ligne. La trame d'essai porte
+   * une cession de 9 000 € sur l'exercice 2 ; réduite à un exercice, l'écart valait 9 000,04 €.
+   */
+  it('le bilan reste équilibré quel que soit le nombre d’exercices', () => {
+    for (const regime of ['IS', 'BNC', 'BIC_IR'] as const) {
+      const d = dossierComplet(regime);
+      for (const nbExercices of [1, 2, 3, 10]) {
+        const r = calculer({ ...d, parametres: { ...d.parametres, nbExercices } });
+        const erreurs = r.controles.filter((c) => !c.ok && c.gravite === 'erreur');
+        expect(
+          erreurs.map((c) => `${regime}/${nbExercices} : ${c.code} — ${c.message}`),
+        ).toEqual([]);
+        expect(r.bilans.every((b) => Math.abs(b.ecart) <= TOLERANCE)).toBe(true);
+      }
+    }
+  });
+
+  it('une ligne rendue inopérante est signalée, jamais tue', () => {
+    const d = dossierComplet('IS');
+    const r = calculer({ ...d, parametres: { ...d.parametres, nbExercices: 1 } });
+    const avertissement = r.controles.find((c) => c.code === 'lignes_hors_horizon');
+    expect(avertissement).toBeDefined();
+    expect(avertissement?.ok).toBe(false);
+    expect(avertissement?.gravite).toBe('avertissement');
+    // Le message nomme la ligne et son exercice : sans cela, l'utilisateur la chercherait.
+    expect(avertissement?.message).toContain('Revente du véhicule');
+    expect(avertissement?.message).toContain('exercice 3');
+    // Un avertissement ne rend pas le dossier incohérent : il reste transmissible.
+    expect(r.coherent).toBe(true);
+  });
+
+  it('« moisAbsoluDansHorizon » refuse tout index qui n’est pas un exercice existant', () => {
+    const exercices = construireExercices(dossierComplet('IS').parametres);
+    // Ce qui existe se convertit.
+    expect(moisAbsoluDansHorizon(exercices, 0, 1)).toBe(0);
+    expect(moisAbsoluDansHorizon(exercices, 2, 12)).toBe(35);
+    // Ce qui n'existe pas rend « null » plutôt que d'être ramené sur un exercice voisin.
+    expect(moisAbsoluDansHorizon(exercices, 3, 1)).toBeNull();
+    expect(moisAbsoluDansHorizon(exercices, 99, 1)).toBeNull();
+    expect(moisAbsoluDansHorizon(exercices, -1, 1)).toBeNull();
+    expect(moisAbsoluDansHorizon(exercices, 1.5, 1)).toBeNull();
+    expect(moisAbsoluDansHorizon(exercices, Number.NaN, 1)).toBeNull();
+    // Le mois dans l'exercice, lui, reste borné : c'est une saisie à corriger, pas une ligne
+    // à faire disparaître.
+    expect(moisAbsoluDansHorizon(exercices, 0, 0)).toBe(0);
+    expect(moisAbsoluDansHorizon(exercices, 0, 99)).toBe(11);
+  });
+
+  it('à l’horizon complet, aucune ligne n’est hors horizon', () => {
+    const r = calculer(dossierComplet('IS'));
+    expect(r.controles.find((c) => c.code === 'lignes_hors_horizon')).toBeUndefined();
+  });
+
+  it('la ligne hors horizon ne produit ni flux ni écriture', () => {
+    const d = dossierComplet('IS');
+    const reduit = { ...d, parametres: { ...d.parametres, nbExercices: 1 } };
+    const r = calculer(reduit);
+    // La cession de l'exercice 2 n'encaisse rien sur l'exercice 0.
+    expect(r.tresorerie.mensuelle.every((m) => m.encaissements.cessions === 0)).toBe(true);
+    // Et aucun produit exceptionnel de cession n'apparaît.
+    const sansCession = calculer({
+      ...reduit,
+      investissements: { ...reduit.investissements, cessions: [] },
+    });
+    expect(r.compteResultat[0]?.produitsExceptionnels).toBe(
+      sansCession.compteResultat[0]?.produitsExceptionnels,
+    );
+    expect(r.bilans[0]?.actif.total).toBe(sansCession.bilans[0]?.actif.total);
   });
 });
 

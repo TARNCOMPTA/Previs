@@ -1,7 +1,7 @@
 import { estAchatConsomme, type LigneCharge, type LignePersonnel } from '../model/charges.js';
 import type { Dossier } from '../model/dossier.js';
 import { estMarchandise, type LigneRecette } from '../model/recettes.js';
-import { moisAbsolu, nbMoisTotal } from './periodes.js';
+import { moisAbsoluDansHorizon, nbMoisTotal } from './periodes.js';
 import { decalerSerie, repartirSurCalendrier, totauxAnnuelsDepuisRepartition } from './repartition.js';
 import type { DetailCharge, DetailPersonnel, DetailRecette, Exercice } from './types.js';
 import { euro, pct, val, zeros } from './utils.js';
@@ -579,7 +579,9 @@ export function calculerFinancements(
 
   for (const apport of dossier.financements.apports) {
     if (!apport.actif || apport.montant === 0) continue;
-    const m = moisAbsolu(exercices, apport.exercice, apport.mois);
+    // Hors horizon, ni trésorerie ni capitaux propres : les deux ou aucun.
+    const m = moisAbsoluDansHorizon(exercices, apport.exercice, apport.mois);
+    if (m === null) continue;
     const compteCourant = apport.type === 'compte_courant';
 
     if (compteCourant) {
@@ -603,7 +605,8 @@ export function calculerFinancements(
 
   for (const s of dossier.financements.subventions) {
     if (!s.actif || s.montant === 0) continue;
-    const m = moisAbsolu(exercices, s.exercice, s.mois);
+    const m = moisAbsoluDansHorizon(exercices, s.exercice, s.mois);
+    if (m === null) continue;
     if (m < horizon) f.subventionsMensuel[m] += s.montant;
     if (s.type === 'exploitation') {
       f.subventionsExploitation[s.exercice] += s.montant;

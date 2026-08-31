@@ -39,6 +39,13 @@ export interface EntreesControles {
   /** Total des besoins et des ressources au démarrage. */
   besoinsDemarrage: number;
   ressourcesDemarrage: number;
+  /**
+   * Lignes datées d'un exercice au-delà de l'horizon du dossier, par section.
+   *
+   * Elles ne produisent ni flux ni écriture — c'est ce qui garde le bilan équilibré quand on
+   * réduit le nombre d'exercices — mais une donnée saisie qui ne produit rien doit se voir.
+   */
+  lignesHorsHorizon: readonly { section: string; libelle: string; exercice: number }[];
 }
 
 function controle(
@@ -283,6 +290,32 @@ export function construireControles(e: EntreesControles): Controle[] {
         gravite: 'avertissement',
       });
     }
+  }
+
+  /*
+   * Une ligne datée d'un exercice qui n'existe pas ne produit rien, volontairement : elle
+   * déséquilibrait le bilan de son montant exact, la trésorerie partant sur le dernier
+   * exercice tandis que l'écriture comptable était perdue. Le silence serait pire que le
+   * défaut : l'utilisateur croirait sa saisie prise en compte.
+   */
+  if (e.lignesHorsHorizon.length > 0) {
+    const n = e.exercices.length;
+    const detail = e.lignesHorsHorizon
+      .slice(0, 5)
+      .map((l) => `${l.libelle} (${l.section}, exercice ${l.exercice + 1})`)
+      .join(', ');
+    const reste = e.lignesHorsHorizon.length > 5 ? `, et ${e.lignesHorsHorizon.length - 5} autre(s)` : '';
+    controles.push({
+      code: 'lignes_hors_horizon',
+      libelle: 'Lignes hors de l’horizon du dossier',
+      ok: false,
+      ecart: 0,
+      message:
+        `${e.lignesHorsHorizon.length} ligne(s) sont datées d’un exercice au-delà des ${n} ` +
+        `exercices du dossier : elles ne sont pas prises en compte. ${detail}${reste}. ` +
+        `Corriger leur exercice, les supprimer, ou augmenter le nombre d’exercices.`,
+      gravite: 'avertissement',
+    });
   }
 
   return controles;

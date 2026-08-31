@@ -1,5 +1,5 @@
 import { formaterMontant } from '@previs/core';
-import { Fragment, useState, type ReactNode } from 'react';
+import { memo, useCallback, useState, type ReactNode } from 'react';
 
 export interface Colonne<T> {
   cle: string;
@@ -8,7 +8,15 @@ export interface Colonne<T> {
   largeur?: number;
   /** Cellule affichée pour une ligne. */
   rendu: (ligne: T, index: number) => ReactNode;
-  /** Valeur numérique servant au total de colonne. Omise, la colonne n'a pas de total. */
+  /**
+   * Valeur numérique servant au total de colonne. Omise, la colonne n'a pas de total.
+   *
+   * Elle est appelée par le pied du tableau, jamais par une ligne. C'est important : le pied
+   * n'est pas mémoïsé, les lignes le sont, et une même fonction employée des deux côtés
+   * obligerait à choisir entre un total périmé et des lignes qui rerendent toutes. D'où
+   * « totauxFrais » ci-dessous, qui permet à un écran de garder ses colonnes stables tout en
+   * recalculant ses totaux à chaque frappe.
+   */
   total?: (ligne: T) => number;
   aide?: string;
   alignementGauche?: boolean;
@@ -30,6 +38,15 @@ interface ProprietesGrille<T> {
   libelleTotal?: string;
   /** Actions rendues sous la grille, typiquement les boutons d'ajout. */
   actions?: ReactNode;
+  /**
+   * Totaux calculés à chaque rendu, par clé de colonne, quand ils dépendent des résultats.
+   *
+   * Ils l'emportent sur « Colonne.total ». C'est ce qui permet à un écran de mémoïser ses
+   * colonnes — condition de la mémoïsation des lignes — sans figer un total : une colonne
+   * dont le total vient du moteur ne peut pas être calculée par une fonction mémoïsée sans
+   * capturer des résultats périmés, et un total périmé est un chiffre faux.
+   */
+  totauxFrais?: Readonly<Record<string, number>>;
 }
 
 /**
@@ -51,17 +68,20 @@ export function GrilleLignes<T>({
   messageVide = 'Aucune ligne pour le moment.',
   libelleTotal = 'Total',
   actions,
+  totauxFrais,
 }: ProprietesGrille<T>) {
   const [deplies, setDeplies] = useState<Set<string>>(new Set());
-  const basculer = (id: string) =>
+  // Stable : une ligne mémoïsée ne doit pas rerendre parce que ce rappel a changé d'identité.
+  const basculer = useCallback((id: string) => {
     setDeplies((courant) => {
       const suivant = new Set(courant);
       if (suivant.has(id)) suivant.delete(id);
       else suivant.add(id);
       return suivant;
     });
+  }, []);
 
-  const avecTotal = colonnes.some((c) => c.total);
+  const avecTotal = colonnes.some((c) => c.total) || Boolean(totauxFrais);
   const nbColonnes = colonnes.length + 1 + (detail ? 1 : 0);
 
   return (
@@ -102,84 +122,24 @@ export function GrilleLignes<T>({
 
             {lignes.map((ligne, index) => {
               const id = cle(ligne);
-              const ouvert = deplies.has(id);
               return (
-                <Fragment key={id}>
-                  <tr className={estProposee?.(ligne) ? 'ligne-llm' : undefined}>
-                    {detail ? (
-                      <td style={{ textAlign: 'center' }}>
-                        <button
-                          className="bouton discret petit"
-                          onClick={() => basculer(id)}
-                          aria-expanded={ouvert}
-                          title={ouvert ? 'Replier les réglages' : 'Déplier les réglages'}
-                        >
-                          {ouvert ? '▾' : '▸'}
-                        </button>
-                      </td>
-                    ) : null}
-
-                    {colonnes.map((c) => (
-                      <td
-                        key={c.cle}
-                        style={{ textAlign: c.alignementGauche ? 'left' : undefined }}
-                      >
-                        {c.rendu(ligne, index)}
-                      </td>
-                    ))}
-
-                    <td className="sans-impression">
-                      <div className="rangee" style={{ justifyContent: 'flex-end', gap: 2 }}>
-                        {onDeplacer ? (
-                          <>
-                            <button
-                              className="bouton discret petit"
-                              title="Monter"
-                              disabled={index === 0}
-                              onClick={() => onDeplacer(ligne, -1)}
-                            >
-                              ↑
-                            </button>
-                            <button
-                              className="bouton discret petit"
-                              title="Descendre"
-                              disabled={index === lignes.length - 1}
-                              onClick={() => onDeplacer(ligne, 1)}
-                            >
-                              ↓
-                            </button>
-                          </>
-                        ) : null}
-                        {onDupliquer ? (
-                          <button
-                            className="bouton discret petit"
-                            title="Dupliquer la ligne"
-                            onClick={() => onDupliquer(ligne)}
-                          >
-                            ⧉
-                          </button>
-                        ) : null}
-                        {onSupprimer ? (
-                          <button
-                            className="bouton discret petit danger"
-                            title="Supprimer la ligne"
-                            onClick={() => onSupprimer(ligne)}
-                          >
-                            ✕
-                          </button>
-                        ) : null}
-                      </div>
-                    </td>
-                  </tr>
-
-                  {ouvert && detail ? (
-                    <tr>
-                      <td colSpan={nbColonnes} style={{ background: 'var(--surface-3)', padding: '12px 16px' }}>
-                        {detail(ligne)}
-                      </td>
-                    </tr>
-                  ) : null}
-                </Fragment>
+                <LigneGrille
+                  key={id}
+                  ligne={ligne}
+                  index={index}
+                  dernier={index === lignes.length - 1}
+                  ouvert={deplies.has(id)}
+                  proposee={estProposee?.(ligne) ?? false}
+                  colonnes={colonnes}
+                  nbColonnes={nbColonnes}
+                  avecChevron={Boolean(detail)}
+                  onBasculer={basculer}
+                  identifiant={id}
+                  detail={detail}
+                  onSupprimer={onSupprimer}
+                  onDupliquer={onDupliquer}
+                  onDeplacer={onDeplacer}
+                />
               );
             })}
           </tbody>
@@ -200,9 +160,11 @@ export function GrilleLignes<T>({
                   >
                     {i === 0
                       ? libelleTotal
-                      : c.total
-                        ? formaterMontant(lignes.reduce((t, l) => t + c.total!(l), 0))
-                        : null}
+                      : totauxFrais && c.cle in totauxFrais
+                        ? formaterMontant(totauxFrais[c.cle])
+                        : c.total
+                          ? formaterMontant(lignes.reduce((t, l) => t + c.total!(l), 0))
+                          : null}
                   </td>
                 ))}
                 <td style={{ background: 'var(--bleu-clair)', borderTop: '1px solid var(--turquoise)' }} />
@@ -315,3 +277,133 @@ export function TableauEtat({
     </div>
   );
 }
+
+/**
+ * Une ligne de grille, mémoïsée.
+ *
+ * C'est la pièce qui tient la performance de la saisie. Sans elle, une frappe redessinait les
+ * quatre-vingts lignes et les huit cents champs de l'écran alors qu'une seule ligne avait
+ * changé — 17,8 ms mesurées sur un dossier de cent soixante lignes, pour un plafond de six.
+ *
+ * La comparaison est celle de « memo » par défaut, sur l'identité des propriétés, et c'est
+ * délibéré : le mode d'échec est alors le bon. Une propriété qu'un écran oublie de stabiliser
+ * ne fait pas afficher un chiffre périmé — elle fait seulement rerendre la ligne, comme avant.
+ * Une comparaison sur mesure qui ignorerait « colonnes » serait plus rapide et fausse : les
+ * fonctions de rendu d'une colonne capturent des valeurs de « resultats », et une capture
+ * périmée afficherait un montant qui n'est plus le bon.
+ *
+ * Ce qui rend la mémoïsation effective : le partage structurel du magasin, qui préserve
+ * l'identité d'une ligne non modifiée, et les « useMemo » / « useCallback » des écrans.
+ */
+interface ProprietesLigne<T> {
+  ligne: T;
+  index: number;
+  dernier: boolean;
+  ouvert: boolean;
+  proposee: boolean;
+  colonnes: Array<Colonne<T>>;
+  nbColonnes: number;
+  avecChevron: boolean;
+  identifiant: string;
+  onBasculer: (id: string) => void;
+  detail?: (ligne: T) => ReactNode;
+  onSupprimer?: (ligne: T) => void;
+  onDupliquer?: (ligne: T) => void;
+  onDeplacer?: (ligne: T, sens: -1 | 1) => void;
+}
+
+function LigneGrilleBrute<T>({
+  ligne,
+  index,
+  dernier,
+  ouvert,
+  proposee,
+  colonnes,
+  nbColonnes,
+  avecChevron,
+  identifiant,
+  onBasculer,
+  detail,
+  onSupprimer,
+  onDupliquer,
+  onDeplacer,
+}: ProprietesLigne<T>) {
+  return (
+    <>
+      <tr className={proposee ? 'ligne-llm' : undefined}>
+        {avecChevron ? (
+          <td style={{ textAlign: 'center' }}>
+            <button
+              className="bouton discret petit"
+              onClick={() => onBasculer(identifiant)}
+              aria-expanded={ouvert}
+              title={ouvert ? 'Replier les réglages' : 'Déplier les réglages'}
+            >
+              {ouvert ? '▾' : '▸'}
+            </button>
+          </td>
+        ) : null}
+
+        {colonnes.map((c) => (
+          <td key={c.cle} style={{ textAlign: c.alignementGauche ? 'left' : undefined }}>
+            {c.rendu(ligne, index)}
+          </td>
+        ))}
+
+        <td className="sans-impression">
+          <div className="rangee" style={{ justifyContent: 'flex-end', gap: 2 }}>
+            {onDeplacer ? (
+              <>
+                <button
+                  className="bouton discret petit"
+                  title="Monter"
+                  disabled={index === 0}
+                  onClick={() => onDeplacer(ligne, -1)}
+                >
+                  ↑
+                </button>
+                <button
+                  className="bouton discret petit"
+                  title="Descendre"
+                  disabled={dernier}
+                  onClick={() => onDeplacer(ligne, 1)}
+                >
+                  ↓
+                </button>
+              </>
+            ) : null}
+            {onDupliquer ? (
+              <button
+                className="bouton discret petit"
+                title="Dupliquer la ligne"
+                onClick={() => onDupliquer(ligne)}
+              >
+                ⧉
+              </button>
+            ) : null}
+            {onSupprimer ? (
+              <button
+                className="bouton discret petit danger"
+                title="Supprimer la ligne"
+                onClick={() => onSupprimer(ligne)}
+              >
+                ✕
+              </button>
+            ) : null}
+          </div>
+        </td>
+      </tr>
+
+      {ouvert && detail ? (
+        <tr>
+          <td colSpan={nbColonnes} style={{ background: 'var(--surface-3)', padding: '12px 16px' }}>
+            {detail(ligne)}
+          </td>
+        </tr>
+      ) : null}
+    </>
+  );
+}
+
+// « memo » perd la généricité : on la rétablit par une assertion, seule entorse acceptable ici.
+const LigneGrille = memo(LigneGrilleBrute) as typeof LigneGrilleBrute;

@@ -1,6 +1,6 @@
 import type { Cession, LigneInvestissement } from '../model/investissements.js';
 import type { Dossier } from '../model/dossier.js';
-import { moisAbsolu, nbMoisTotal } from './periodes.js';
+import { moisAbsoluDansHorizon, nbMoisTotal } from './periodes.js';
 import type { AmortissementImmobilisation, Exercice } from './types.js';
 import { euro, pct, repartirEgal, zeros } from './utils.js';
 
@@ -152,7 +152,10 @@ export function calculerFluxInvestissements(
 
   for (const ligne of dossier.investissements.lignes) {
     if (!ligne.actif || ligne.montantHT === 0) continue;
-    const debut = moisAbsolu(exercices, ligne.exercice, ligne.mois);
+    // Une ligne datée hors de l'horizon ne produit rien : ni décaissement, ni immobilisation.
+    // Le contrôle « lignes_hors_horizon » la signale, elle ne disparaît pas en silence.
+    const debut = moisAbsoluDansHorizon(exercices, ligne.exercice, ligne.mois);
+    if (debut === null) continue;
     const tva = assujetti && ligne.tvaRecuperable ? euro(ligne.montantHT * pct(ligne.tauxTva)) : 0;
     const ttc = euro(ligne.montantHT + tva);
 
@@ -235,7 +238,15 @@ export function calculerCessions(
 
   for (const cession of dossier.investissements.cessions as Cession[]) {
     if (!cession.actif || cession.prixCessionHT === 0) continue;
-    const mois = moisAbsolu(exercices, cession.exercice, cession.mois);
+    /*
+     * Le cas qui déséquilibrait le bilan : une cession datée de l'exercice 2 dans un dossier
+     * réduit à un exercice voyait son prix encaissé sur l'exercice 0 — « moisAbsolu » ramenait
+     * l'index — tandis que « prixParExercice[2] » d'un tableau de longueur 1 était perdu. La
+     * trésorerie montait de 10 800 €, le produit exceptionnel n'existait pas, et l'actif ne
+     * retrouvait plus son passif, à 9 000 € près.
+     */
+    const mois = moisAbsoluDansHorizon(exercices, cession.exercice, cession.mois);
+    if (mois === null) continue;
     const tva = assujetti ? euro(cession.prixCessionHT * pct(cession.tauxTva)) : 0;
 
     flux.encaisseTTC[mois] += euro(cession.prixCessionHT + tva);
