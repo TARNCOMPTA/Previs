@@ -23,9 +23,12 @@ libérale au réel (BNC), entreprise individuelle au réel (BIC à l'IR). Le ré
 choisi change les libellés, les champs affichés et les règles de calcul —
 un dossier BNC ne parle ni d'impôt sur les sociétés ni de dividendes.
 
-**Un dossier PDF** d'une vingtaine de pages à la charte du cabinet, produit
-depuis les mêmes données, avec page de garde, dix-neuf sections numérotées,
-graphiques et annexes mensuelles.
+**Un dossier PDF** d'une vingtaine de pages à la charte pourpre et or du
+cabinet, produit depuis les mêmes données : couverture à fond perdu, sommaire,
+page de synthèse, dix-sept sections numérotées, graphiques et annexes
+mensuelles. Les polices — Spectral en titrage, Hanken Grotesk en texte, IBM Plex
+Mono pour les chiffres — sont incorporées au document : Chromium imprime sans
+accès réseau, et un serveur sans fonte n'aurait rien à mettre à la place.
 
 ### Deux partis pris
 
@@ -102,8 +105,9 @@ Créez un `.env` à partir de `.env.example` et renseignez `SESSION_SECRET`,
 `BOOTSTRAP_ADMIN_EMAIL` et `BOOTSTRAP_ADMIN_PASSWORD` pour obtenir un premier
 compte au démarrage.
 
-La génération PDF a besoin de Chromium : renseignez `CHROMIUM_PATH` si le
-binaire n'est pas dans `/usr/bin/chromium`.
+La génération PDF a besoin de Chromium. Sans `CHROMIUM_PATH`, c'est Playwright
+qui choisit son binaire — la coquille sans affichage, bâtie pour cela ; ne
+renseignez la variable que pour imposer un Chromium de distribution.
 
 ---
 

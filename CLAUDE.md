@@ -41,7 +41,8 @@ server/src/cabinet.ts    identité du cabinet et contrôle des logos déposés
 server/src/oauth.ts      serveur d'autorisation OAuth 2.1 du point d'entrée MCP
 server/src/oauthRoutes.ts découverte, consentement, jetons, révocation
 server/src/cles.ts       clés d'accès WebAuthn : cérémonies, défis, vérification
-server/src/pdf/          document HTML imprimé par Chromium
+server/src/pdf/          document HTML imprimé par Chromium, charte pourpre
+server/src/pdf/polices/  les six woff2 incorporées, et leur générateur
 mcp/src/outils.ts        les quinze outils exposés à l'assistant
 web/src/store/dossier.ts état, recalcul, enregistrement différé, synchronisation
 web/src/ui/              composants partagés — n'en créer un nouveau qu'ici
@@ -82,6 +83,31 @@ plafond de cinq millisecondes par calcul sur un dossier de deux cents lignes.
 Ne jamais remettre de validation dans `calculer()` : ajouter plutôt la frontière
 manquante.
 
+### Le troisième point délicat : ce que le PDF ne peut pas faire
+
+Chromium imprime le dossier **sans aucun accès réseau**. Trois conséquences qui ne se
+devinent pas :
+
+1. **Les polices sont incorporées en base64** (`pdf/polices.ts`, engendré par
+   `polices/engendrer.mjs`). Une police appelée depuis le réseau ne serait jamais chargée.
+   Le séparateur de milliers du moteur, l'espace **fine** insécable U+202F, n'existe dans
+   aucune des six faces : `pdf/nombres.ts` la remplace par U+00A0, dont l'avance vaut
+   exactement celle d'un chiffre. Tout montant du PDF passe par ce module, jamais par
+   `formaterMontant()` directement.
+2. **Le pied de page est le gabarit natif de Chromium**, seul à savoir compter les pages.
+   Il est rendu dans un document isolé — d'où ses styles en ligne et ses deux @font-face —
+   et il est dessiné sur **toutes** les pages, marges nulles comprises : la couverture et
+   les coordonnées lui réservent donc 16 mm (`--bande-pied`). Il n'y a pas d'en-tête.
+3. **Aucun chiffre n'est tronqué.** La largeur des colonnes est calculée sur la plus longue
+   chaîne réellement imprimée (`composants.ts`, `repartirColonnes()`), colonne de
+   pourcentage comprise, et les tableaux se découpent en blocs nommés plutôt que de serrer.
+   Ni `overflow: hidden` ni `text-overflow: ellipsis` sur une cellule : « 92 0… » se lit
+   comme un nombre complet, et un chiffre amputé en silence est aussi faux qu'un chiffre
+   inventé.
+
+`packages/server/test/pdf.test.ts` verrouille ces points sur trois régimes et un à dix
+exercices : parité des cellules, caractères absents des polices, trous de gabarit.
+
 ### Le logo n'est pas une donnée du dossier
 
 Le logo du client vit dans sa propre colonne de la table `dossiers`, jamais dans le
@@ -108,7 +134,7 @@ premier démarrage, tout le reste vient de l'écran Administration.
 
 ```bash
 npm run typecheck      # les quatre paquets
-npm test               # 70 essais du moteur et du modèle, 140 essais du serveur
+npm test               # 70 essais du moteur et du modèle, 198 essais du serveur
 npm run build
 ```
 
@@ -117,7 +143,9 @@ vérifient l'équilibre du bilan et les contrôles de cohérence sur un dossier
 complet, pour chacun des trois régimes.
 
 Les essais de l'API (`packages/server/test/`) passent par `app.inject()` : ni port
-ouvert, ni Chromium lancé, base en mémoire.
+ouvert, ni Chromium lancé, base en mémoire. Ceux du PDF non plus ne lancent Chromium :
+`construireHtml()` est pure, et c'est elle qui porte tout ce qui peut être faux dans les
+chiffres. La mise en page, elle, se regarde — voir ci-dessous.
 
 Pour une modification de l'interface, la lancer réellement : `npm run dev`, puis
 parcourir les écrans touchés. Un typecheck qui passe ne prouve pas qu'un écran
@@ -126,6 +154,13 @@ s'affiche.
 Pour une modification du chemin de saisie, mesurer : ouvrir un dossier d'une
 soixantaine de lignes et chronométrer la tâche synchrone déclenchée par une frappe.
 Elle doit rester sous six millisecondes.
+
+Pour une modification du PDF, produire le document et le **regarder**, pour les trois
+régimes et pour un, trois et dix exercices : un typecheck qui passe n'exclut ni une page
+blanche aux marges parfaites, ni un chiffre qui déborde. Attention aux visionneuses de
+fortune : plusieurs bibliothèques ne peignent pas les sous-ensembles IBM Plex Mono
+incorporés et rendent des colonnes de montants **vides**, ce qui n'est pas un défaut du
+document. Extraire la couche de texte, ou capturer l'HTML dans Chromium, lève le doute.
 
 ## Sécurité
 

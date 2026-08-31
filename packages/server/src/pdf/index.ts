@@ -2,7 +2,7 @@ import type { Browser } from 'playwright-core';
 import { chromium } from 'playwright-core';
 import type { Dossier, Resultats } from '@previs/core';
 import { CABINET_PAR_DEFAUT } from '@previs/core';
-import { construireEntete, construireHtml, construirePied, type OptionsDocument } from './document.js';
+import { construireHtml, construirePied, type OptionsDocument } from './document.js';
 
 let navigateur: Browser | null = null;
 let ouvertureEnCours: Promise<Browser> | null = null;
@@ -135,9 +135,10 @@ export async function fermerNavigateur(): Promise<void> {
 /**
  * Produit le dossier prévisionnel au format PDF, à la charte TARN COMPTA.
  *
- * La numérotation des pages est confiée au pied de page natif de Chromium, seul
- * moyen de connaître le nombre total de pages ; les bandeaux, eux, sont des éléments
- * en position fixe que Chromium répète sur chaque page.
+ * Le seul bandeau répété est le pied de page, confié au gabarit natif de Chromium :
+ * lui seul connaît le nombre total de pages, et lui seul se place de façon fiable dans
+ * la marge basse. Il figure sur les vingt-six pages, couverture comprise ; c'est la
+ * feuille de style qui lui réserve sa bande sur les pages à fond perdu.
  */
 export async function genererPdf(
   dossier: Dossier,
@@ -160,13 +161,15 @@ export async function genererPdf(
       printBackground: true,
       preferCSSPageSize: true,
       displayHeaderFooter: true,
-      headerTemplate: construireEntete(dossier, resultats, cabinet),
-      footerTemplate: construirePied(cabinet),
+      // Un en-tête vide, et non l'absence d'en-tête : « displayHeaderFooter » impose les deux
+      // gabarits, et celui de Chromium par défaut imprimerait le titre du document et son URL.
+      headerTemplate: '<span></span>',
+      footerTemplate: construirePied(dossier, resultats, cabinet),
     });
   } finally {
     await contexte.close();
   }
 }
 
-export { construireEntete, construireHtml, construirePied };
+export { construireHtml, construirePied };
 export type { OptionsDocument };
