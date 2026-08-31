@@ -26,6 +26,7 @@ import {
 import { journaliser, type BaseDonnees } from './base.js';
 import { verifierLogo, type ServiceCabinet } from './cabinet.js';
 import type { DepotSqlite } from './depot.js';
+import type { ServiceOauth } from './oauth.js';
 import type { Configuration } from './config.js';
 import {
   empreinteJeton,
@@ -40,6 +41,7 @@ interface Contexte {
   auth: ServiceAuthentification;
   depot: DepotSqlite;
   cabinet: ServiceCabinet;
+  oauth: ServiceOauth;
   config: Configuration;
 }
 
@@ -542,6 +544,30 @@ export function enregistrerRoutes(app: FastifyInstance, ctx: Contexte): void {
       cible: id,
     });
     return { supprime: true };
+  });
+
+  // ─── Autorisations OAuth accordées aux connecteurs ──────────────────────────
+  // L'écran de consentement promet que l'autorisation est révocable : ces deux routes
+  // tiennent cette promesse.
+  app.get('/api/oauth/autorisations', async (requete, reponse) => {
+    const identite = identifier(ctx.auth, requete);
+    if (!exiger(identite, reponse, { admin: true })) return;
+    return ctx.oauth.listerToutes();
+  });
+
+  app.delete('/api/oauth/autorisations/:utilisateurId/:clientId', async (requete, reponse) => {
+    const identite = identifier(ctx.auth, requete);
+    if (!exiger(identite, reponse, { admin: true })) return;
+    const { utilisateurId, clientId } = requete.params as { utilisateurId: string; clientId: string };
+    const revoques = ctx.oauth.revoquerPourClient(utilisateurId, clientId);
+    journaliser(ctx.base, {
+      utilisateur: identite.utilisateur.nom,
+      origine: 'interface',
+      action: 'revocation_autorisation',
+      cible: clientId,
+      detail: `${revoques} jeton(s)`,
+    });
+    return { revoques };
   });
 
   // ─── Comptes ────────────────────────────────────────────────────────────────

@@ -1,4 +1,4 @@
-import type { JetonApi, Utilisateur } from '@previs/core';
+import type { AutorisationOauth, JetonApi, Utilisateur } from '@previs/core';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api/client.js';
@@ -13,17 +13,29 @@ export function Administration() {
   const utilisateurCourant = useSession((e) => e.utilisateur);
   const [utilisateurs, setUtilisateurs] = useState<Utilisateur[] | null>(null);
   const [jetons, setJetons] = useState<JetonApi[] | null>(null);
+  const [autorisations, setAutorisations] = useState<AutorisationOauth[] | null>(null);
   const [erreur, setErreur] = useState<string | null>(null);
   const [creationCompte, setCreationCompte] = useState(false);
   const [creationJeton, setCreationJeton] = useState(false);
   const [jetonEnClair, setJetonEnClair] = useState<{ libelle: string; jeton: string } | null>(null);
-  const [aSupprimer, setASupprimer] = useState<{ type: 'compte' | 'jeton'; id: string; nom: string } | null>(null);
+  const [aSupprimer, setASupprimer] = useState<{
+    type: 'compte' | 'jeton' | 'autorisation';
+    id: string;
+    nom: string;
+    /** Compte visé, pour une autorisation : elle se révoque par couple compte-connecteur. */
+    utilisateurId?: string;
+  } | null>(null);
 
   const charger = async () => {
     try {
-      const [u, j] = await Promise.all([api.listerUtilisateurs(), api.listerJetons()]);
+      const [u, j, a] = await Promise.all([
+        api.listerUtilisateurs(),
+        api.listerJetons(),
+        api.listerAutorisations(),
+      ]);
       setUtilisateurs(u);
       setJetons(j);
+      setAutorisations(a);
     } catch (e) {
       setErreur(e instanceof Error ? e.message : 'Chargement impossible.');
     }
@@ -187,6 +199,66 @@ export function Administration() {
             )}
           </div>
         </section>
+
+        <section className="carte">
+          <header>
+            <div>
+              <h2>Connecteurs autorisés</h2>
+              <div className="discret">
+                Une autorisation accordée depuis Claude — application ou site — vaut jusqu’à sa
+                révocation. La révoquer coupe l’accès immédiatement ; le connecteur redemandera le
+                consentement à sa prochaine connexion.
+              </div>
+            </div>
+          </header>
+          <div className="corps">
+            {!autorisations ? (
+              <Chargement />
+            ) : autorisations.length === 0 ? (
+              <div className="zone-vide">Aucun connecteur autorisé.</div>
+            ) : (
+              <table className="etat">
+                <thead>
+                  <tr>
+                    <th style={{ textAlign: 'left' }}>Application</th>
+                    <th style={{ textAlign: 'left' }}>Compte</th>
+                    <th>Accordée le</th>
+                    <th>Valable jusqu’au</th>
+                    <th />
+                  </tr>
+                </thead>
+                <tbody>
+                  {autorisations.map((a) => (
+                    <tr key={`${a.utilisateurId}:${a.clientId}`}>
+                      <td style={{ textAlign: 'left' }}>{a.nomClient || 'Application sans nom'}</td>
+                      <td style={{ textAlign: 'left' }}>
+                        {a.compte}
+                        <div className="discret">{a.courriel}</div>
+                      </td>
+                      <td>{new Date(a.accordeeLe).toLocaleString('fr-FR')}</td>
+                      <td>{new Date(a.expireLe).toLocaleDateString('fr-FR')}</td>
+                      <td>
+                        <button
+                          className="bouton discret petit danger"
+                          onClick={() =>
+                            setASupprimer({
+                              type: 'autorisation',
+                              id: a.clientId,
+                              nom: `${a.nomClient || 'Application sans nom'} — ${a.compte}`,
+                              utilisateurId: a.utilisateurId,
+                            })
+                          }
+                        >
+                          ✕
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </section>
       </div>
 
       {creationCompte ? <ModaleCompte onFermer={() => setCreationCompte(false)} onCree={charger} /> : null}
@@ -204,17 +276,26 @@ export function Administration() {
       ) : null}
       {aSupprimer ? (
         <Confirmation
-          titre={aSupprimer.type === 'compte' ? 'Supprimer le compte' : 'Révoquer le jeton'}
+          titre={
+            aSupprimer.type === 'compte'
+              ? 'Supprimer le compte'
+              : aSupprimer.type === 'jeton'
+                ? 'Révoquer le jeton'
+                : 'Révoquer l’autorisation'
+          }
           message={
             aSupprimer.type === 'compte'
               ? `Le compte « ${aSupprimer.nom} » sera supprimé et ses sessions fermées.`
-              : `Le jeton « ${aSupprimer.nom} » cessera immédiatement de fonctionner.`
+              : aSupprimer.type === 'jeton'
+                ? `Le jeton « ${aSupprimer.nom} » cessera immédiatement de fonctionner.`
+                : `« ${aSupprimer.nom} » perdra l’accès aux dossiers immédiatement.`
           }
           libelleAction={aSupprimer.type === 'compte' ? 'Supprimer' : 'Révoquer'}
           onAnnuler={() => setASupprimer(null)}
           onConfirmer={async () => {
             if (aSupprimer.type === 'compte') await api.supprimerUtilisateur(aSupprimer.id);
-            else await api.supprimerJeton(aSupprimer.id);
+            else if (aSupprimer.type === 'jeton') await api.supprimerJeton(aSupprimer.id);
+            else await api.revoquerAutorisation(aSupprimer.utilisateurId ?? '', aSupprimer.id);
             setASupprimer(null);
             await charger();
           }}

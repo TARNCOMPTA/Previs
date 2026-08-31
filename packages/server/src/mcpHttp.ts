@@ -1,6 +1,7 @@
 import { ENTETE_JETON, type DepotDossiers } from '@previs/core';
 import type { FastifyInstance } from 'fastify';
 import { jetonDeRequete, type ServiceAuthentification } from './auth.js';
+import type { ServiceOauth } from './oauth.js';
 
 /**
  * Monte le serveur MCP sur `/mcp`.
@@ -11,21 +12,37 @@ import { jetonDeRequete, type ServiceAuthentification } from './auth.js';
  */
 export async function monterMcpHttp(
   app: FastifyInstance,
-  ctx: { auth: ServiceAuthentification; depot: DepotDossiers },
+  ctx: {
+    auth: ServiceAuthentification;
+    depot: DepotDossiers;
+    oauth: ServiceOauth;
+    urlPublique: string;
+  },
 ): Promise<void> {
   const { creerServeurMcp, traiterRequeteHttp } = await import('@previs/mcp');
 
   app.all('/mcp', async (requete, reponse) => {
     const jeton = jetonDeRequete(requete);
-    const utilisateur = jeton ? ctx.auth.parJeton(jeton) : null;
+    // Deux sortes de porteurs : un jeton d'API, posé à la main par un client qui sait
+    // le faire, ou un jeton d'accès OAuth, obtenu par un connecteur.
+    const utilisateur = jeton ? (ctx.oauth.parJetonAcces(jeton) ?? ctx.auth.parJeton(jeton)) : null;
 
     if (!utilisateur) {
-      return reponse.code(401).send({
-        erreur:
-          'Jeton d’API absent ou invalide. Le transmettre par « Authorization: Bearer ' +
-          `previs_… », ou par l’en-tête ${ENTETE_JETON}.`,
-        code: 'non_authentifie',
-      });
+      // C'est cet en-tête qui permet à un client OAuth de découvrir le serveur
+      // d'autorisation : sans lui, un connecteur ne sait pas où s'authentifier.
+      const base = ctx.urlPublique.replace(/\/+$/, '');
+      return reponse
+        .code(401)
+        .header(
+          'www-authenticate',
+          `Bearer realm="Previs", resource_metadata="${base}/.well-known/oauth-protected-resource"`,
+        )
+        .send({
+          erreur:
+            'Autorisation requise. Un connecteur passe par OAuth ; un client qui pose ses ' +
+            `en-têtes peut employer « Authorization: Bearer previs_… » ou ${ENTETE_JETON}.`,
+          code: 'non_authentifie',
+        });
     }
     if (utilisateur.role === 'lecteur') {
       return reponse

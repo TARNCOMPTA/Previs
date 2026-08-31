@@ -114,6 +114,57 @@ function migrer(base: BaseDonnees): void {
       modifie_le TEXT NOT NULL
     );
 
+    -- ─── Autorisation OAuth du point d'entrée MCP ──────────────────────────
+    CREATE TABLE IF NOT EXISTS oauth_clients (
+      client_id       TEXT PRIMARY KEY,
+      nom             TEXT NOT NULL DEFAULT '',
+      redirect_uris   TEXT NOT NULL,
+      portee          TEXT NOT NULL DEFAULT '',
+      cree_le         TEXT NOT NULL,
+      derniere_utilisation TEXT
+    );
+
+    -- Les codes sont à usage unique : la colonne « consomme_le » interdit le rejeu
+    -- plutôt que de supprimer la ligne, ce qui permet de repérer une tentative.
+    CREATE TABLE IF NOT EXISTS oauth_codes (
+      empreinte       TEXT PRIMARY KEY,
+      client_id       TEXT NOT NULL,
+      utilisateur_id  TEXT NOT NULL REFERENCES utilisateurs(id) ON DELETE CASCADE,
+      redirect_uri    TEXT NOT NULL,
+      code_challenge  TEXT NOT NULL,
+      portee          TEXT NOT NULL DEFAULT '',
+      ressource       TEXT NOT NULL DEFAULT '',
+      expire_le       TEXT NOT NULL,
+      cree_le         TEXT NOT NULL,
+      consomme_le     TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS oauth_jetons (
+      empreinte       TEXT PRIMARY KEY,
+      genre           TEXT NOT NULL,
+      client_id       TEXT NOT NULL,
+      utilisateur_id  TEXT NOT NULL REFERENCES utilisateurs(id) ON DELETE CASCADE,
+      portee          TEXT NOT NULL DEFAULT '',
+      ressource       TEXT NOT NULL DEFAULT '',
+      expire_le       TEXT NOT NULL,
+      cree_le         TEXT NOT NULL,
+      revoque_le      TEXT,
+      /* Rotation des jetons de rafraîchissement : celui qui remplace désigne son aîné,
+         ce qui permet de détecter le rejeu d'un jeton déjà échangé. */
+      remplace        TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_oauth_jetons_utilisateur ON oauth_jetons(utilisateur_id);
+    CREATE INDEX IF NOT EXISTS idx_oauth_jetons_expire ON oauth_jetons(expire_le);
+
+    -- Demandes d'autorisation en cours : l'écran de consentement s'y réfère par un
+    -- identifiant opaque, plutôt que de recopier les paramètres dans un formulaire.
+    CREATE TABLE IF NOT EXISTS oauth_demandes (
+      id              TEXT PRIMARY KEY,
+      parametres      TEXT NOT NULL,
+      expire_le       TEXT NOT NULL,
+      cree_le         TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS journal_audit (
       id             INTEGER PRIMARY KEY AUTOINCREMENT,
       horodatage     TEXT NOT NULL,
@@ -168,6 +219,14 @@ export function journaliser(
 
 /** Supprime les sessions expirées. Appelé au démarrage et périodiquement. */
 export function purgerSessions(base: BaseDonnees): number {
-  return base.prepare('DELETE FROM sessions WHERE expire_le < ?').run(new Date().toISOString())
-    .changes;
+  const maintenant = new Date().toISOString();
+  const n = base.prepare('DELETE FROM sessions WHERE expire_le < ?').run(maintenant).changes;
+
+  // Les traces de l'autorisation OAuth expirent de la même façon. Les codes consommés
+  // sont gardés une journée : leur seule utilité passée est de repérer un rejeu.
+  base.prepare("DELETE FROM oauth_codes WHERE expire_le < ? AND (consomme_le IS NULL OR consomme_le < ?)")
+    .run(maintenant, new Date(Date.now() - 86400000).toISOString());
+  base.prepare('DELETE FROM oauth_demandes WHERE expire_le < ?').run(maintenant);
+  base.prepare('DELETE FROM oauth_jetons WHERE expire_le < ?').run(maintenant);
+  return n;
 }

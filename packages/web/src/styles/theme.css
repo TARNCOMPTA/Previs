@@ -159,6 +159,11 @@ label.libelle {
 .bouton.discret:hover:not(:disabled) { background: var(--surface-3); color: var(--texte); }
 .bouton.danger { color: var(--erreur); }
 .bouton.danger:hover:not(:disabled) { background: var(--erreur-fond); border-color: var(--erreur); }
+/* La confirmation d'une action destructive est un bouton plein rouge : le rouge posé
+   sur le bleu du bouton principal ne se lisait pas, et l'action mérite sa couleur. */
+.bouton.principal.danger { background: var(--erreur); border-color: var(--erreur); color: #fff; }
+.bouton.principal.danger:hover:not(:disabled) { background: var(--erreur); border-color: var(--erreur); filter: brightness(0.92); }
+:root.sombre .bouton.principal.danger { color: #23100e; }
 .bouton.petit { padding: 3px 8px; font-size: 12px; }
 
 /* ─── Blocs ────────────────────────────────────────────────────────────────── */

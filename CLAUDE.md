@@ -38,6 +38,8 @@ core/src/engine/         immobilisations, emprunts, flux, fiscal, états,
 core/src/api/            contrat HTTP partagé et opérations atomiques
 server/src/depot.ts      persistance, versions, verrouillage optimiste
 server/src/cabinet.ts    identité du cabinet et contrôle des logos déposés
+server/src/oauth.ts      serveur d'autorisation OAuth 2.1 du point d'entrée MCP
+server/src/oauthRoutes.ts découverte, consentement, jetons, révocation
 server/src/pdf/          document HTML imprimé par Chromium
 mcp/src/outils.ts        les quinze outils exposés à l'assistant
 web/src/store/dossier.ts état, recalcul, enregistrement différé, synchronisation
@@ -105,7 +107,7 @@ premier démarrage, tout le reste vient de l'écran Administration.
 
 ```bash
 npm run typecheck      # les quatre paquets
-npm test               # 70 essais du moteur et du modèle, 22 essais de l'API
+npm test               # 70 essais du moteur et du modèle, 87 essais du serveur
 npm run build
 ```
 
@@ -132,7 +134,7 @@ connexion par adresse **et** par compte. Ne jamais consigner un mot de passe, un
 jeton en clair ou le contenu d'un dossier dans les journaux. Le serveur refuse de
 démarrer en production sans `SESSION_SECRET`.
 
-Quatre règles à ne pas défaire :
+Cinq règles à ne pas défaire :
 
 1. **Un chemin d'opération est borné.** `resoudreChemin()` n'accepte que les sept
    sections du dossier, refuse `__proto__`, `prototype` et `constructor`, et ne
@@ -145,7 +147,13 @@ Quatre règles à ne pas défaire :
 4. **Une écriture par cookie exige un `Origin` connu.** C'est la seconde barrière
    derrière `SameSite=lax` ; les appels par jeton en sont dispensés, un en-tête
    personnalisé ne se forgeant pas depuis une page tierce.
+5. **PKCE est obligatoire, en S256 seulement, et les jetons de rafraîchissement
+   tournent.** « plain » n'est ni accepté ni annoncé. Un code ou un jeton de
+   rafraîchissement rejoué révoque toute la lignée du compte pour ce client : c'est le
+   seul moyen de constater une fuite. Rien n'est conservé en clair, ni code ni jeton.
+   L'adresse de redirection d'un client est vérifiée **avant** toute redirection, sans
+   quoi le serveur d'autorisation devient une redirection ouverte.
 
-`packages/core/test/securite.test.ts` et `packages/server/test/securite.test.ts`
-verrouillent ces points. Un échec y signale une protection retirée, pas un chiffre
-qui a bougé.
+`packages/core/test/securite.test.ts`, `packages/server/test/securite.test.ts` et
+`packages/server/test/oauth.test.ts` verrouillent ces points. Un échec y signale une
+protection retirée, pas un chiffre qui a bougé.

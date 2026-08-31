@@ -109,11 +109,42 @@ binaire n'est pas dans `/usr/bin/chromium`.
 
 ## Brancher l'assistant
 
-Créez un jeton dans **Administration → Jetons d'API**. Il n'est affiché qu'une
-seule fois : seule son empreinte SHA-256 est conservée. C'est la seule clé nécessaire —
-il n'y a ni identifiant ni secret de client, le logiciel n'utilise pas OAuth.
+Deux voies, selon ce que le client sait faire.
 
-### Par HTTP — un connecteur, rien à installer
+### Par connecteur OAuth — le cas d'un connecteur personnalisé de Claude
+
+Rien à préparer, aucune clé à créer : le connecteur ne demande qu'une adresse.
+
+| Réglage | Valeur |
+|---|---|
+| Adresse du serveur | `https://previs.tarncompta.fr/mcp` |
+| ID client OAuth | *laisser vide* |
+| Secret client OAuth | *laisser vide* |
+
+Le connecteur s'enregistre lui-même (RFC 7591), ouvre un écran de consentement aux
+couleurs du cabinet, et c'est là qu'on saisit **son adresse et son mot de passe Previs** :
+l'autorisation vaut pour ce compte, avec ses droits. Elle apparaît ensuite dans
+**Administration → Connecteurs autorisés**, où la révoquer coupe l'accès sur-le-champ.
+
+Le serveur d'autorisation suit la spécification MCP : code d'autorisation avec PKCE
+obligatoire en S256, clients publics sans secret, jeton d'accès d'une heure et jeton de
+rafraîchissement de trente jours qui tourne à chaque échange. Un jeton de
+rafraîchissement rejoué révoque toute la lignée — c'est la seule façon de constater une
+fuite. Rien n'est conservé en clair : ni code, ni jeton, seulement leur empreinte
+SHA-256.
+
+Les points d'entrée, si un client a besoin de les connaître :
+`/.well-known/oauth-protected-resource`, `/.well-known/oauth-authorization-server`,
+`/oauth/enregistrer`, `/oauth/autoriser`, `/oauth/jeton`, `/oauth/revoquer`.
+
+> `PUBLIC_URL` doit être l'adresse publique **en https** : c'est elle que publient les
+> métadonnées, et un connecteur refuse un serveur d'autorisation en clair. Le service
+> l'annonce au démarrage si ce n'est pas le cas.
+
+### Par jeton d'API — Claude Code, un appel en ligne de commande
+
+Créez un jeton dans **Administration → Jetons d'API**. Il n'est affiché qu'une
+seule fois : seule son empreinte SHA-256 est conservée.
 
 | Réglage | Valeur |
 |---|---|
@@ -123,6 +154,10 @@ il n'y a ni identifiant ni secret de client, le logiciel n'utilise pas OAuth.
 L'en-tête propre au logiciel, `x-previs-token`, est accepté de façon équivalente : les
 clients qui permettent d'ajouter un en-tête arbitraire peuvent l'employer. Aucune autre
 forme n'est reconnue — pas de jeton dans l'URL, qui figurerait dans les journaux.
+
+Un jeton d'API n'administre pas : il vit en clair dans un fichier de configuration, et
+n'ouvre donc ni la gestion des comptes, ni celle des jetons, quel que soit le rôle de
+son titulaire. Il en va de même d'un jeton OAuth, qui ne vaut que pour `/mcp`.
 
 ### Par processus local — quand le client ne sait pas parler HTTP
 
@@ -197,13 +232,20 @@ posées par le service lui-même, jamais déléguées au seul reverse-proxy :
 | Perte de l'accès administrateur | Le dernier administrateur actif ne peut être ni supprimé, ni rétrogradé, ni désactivé |
 | Divulgation par un message d'erreur | En production, le détail d'une erreur interne reste dans le journal ; la réponse ne le porte pas |
 | Saturation par l'export PDF | Trente rendus par compte et par quart d'heure |
+| Code d'autorisation intercepté | PKCE obligatoire en S256 ; « plain » n'est ni accepté ni annoncé, et un code rejoué révoque tout ce qui avait été émis |
+| Détournement du retour d'un connecteur | L'adresse de redirection est comparée caractère par caractère à celle enregistrée, et vérifiée **avant** toute redirection : une adresse inconnue ne provoque aucun renvoi |
+| Jeton de rafraîchissement dérobé | Rotation à chaque échange ; le rejeu de l'ancien révoque la lignée entière du compte pour ce client |
+| Paramètres d'autorisation modifiés à la soumission | Le formulaire de consentement ne porte qu'un identifiant opaque : les paramètres restent au serveur |
+| Écritures anonymes en boucle | Enregistrement de client et ouverture de demande plafonnés à trente par adresse et par quart d'heure |
 
 Chaque point est verrouillé par un essai : `packages/core/test/securite.test.ts` pour le
-modèle et les opérations, `packages/server/test/securite.test.ts` pour l'API.
+modèle et les opérations, `packages/server/test/securite.test.ts` pour l'API,
+`packages/server/test/oauth.test.ts` pour le serveur d'autorisation.
 
 Le journal d'audit consigne connexions, échecs de connexion, changements de mot de
-passe, créations et suppressions de comptes et de jetons, et exports PDF. Il ne
-consigne jamais un mot de passe, un jeton en clair ni le contenu d'un dossier.
+passe, créations et suppressions de comptes et de jetons, enregistrements de clients
+OAuth, consentements accordés ou refusés, révocations d'autorisation, et exports PDF. Il
+ne consigne jamais un mot de passe, un jeton en clair ni le contenu d'un dossier.
 
 ## Déploiement
 

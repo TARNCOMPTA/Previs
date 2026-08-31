@@ -1,4 +1,5 @@
 import type {
+  AutorisationOauth,
   Cabinet,
   DossierEnregistre,
   ErreurApi,
@@ -145,4 +146,11 @@ export const api = {
       corps: { libelle, validiteJours },
     }),
   supprimerJeton: (id: string) => appeler<{ supprime: boolean }>(`/api/jetons/${id}`, { methode: 'DELETE' }),
+
+  // ─── Autorisations accordées aux connecteurs OAuth ────────────────────────
+  listerAutorisations: () => appeler<AutorisationOauth[]>('/api/oauth/autorisations'),
+  revoquerAutorisation: (utilisateurId: string, clientId: string) =>
+    appeler<{ revoques: number }>(`/api/oauth/autorisations/${utilisateurId}/${clientId}`, {
+      methode: 'DELETE',
+    }),
 };

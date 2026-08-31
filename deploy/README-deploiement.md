@@ -81,7 +81,10 @@ cd /opt/previs && sudo ./deploy/installer.sh \
 2. Le changer immédiatement, puis `sudo rm /opt/previs/premier-acces.txt`.
 3. Renseigner **Administration → Identité du cabinet** : logo, SIRET, inscription
    à l'Ordre, coordonnées. C'est ce qui s'imprimera sur les dossiers remis.
-4. Créer un jeton d'API dans **Administration**, pour brancher l'assistant.
+4. Brancher l'assistant : pour un connecteur personnalisé de Claude, il suffit de
+   l'adresse `https://previs.tarncompta.fr/mcp` — ni identifiant ni secret de client,
+   voir l'étape 6. Pour Claude Code ou un appel en ligne de commande, créer un jeton
+   d'API dans **Administration**.
 
 ### Si quelque chose cloche
 
@@ -312,14 +315,31 @@ administrateur.
 
 ## 6. Brancher l'assistant
 
-Dans l'interface, ouvrez **Administration → Jetons d'API** et créez un jeton.
-Il n'est affiché qu'une seule fois : seule son empreinte est conservée en base.
+Trois façons de raccorder Claude, selon ce que le client sait faire.
 
-Deux façons de raccorder Claude :
+**Par connecteur OAuth** — un connecteur personnalisé de claude.ai ou de Claude
+Desktop. C'est la voie la plus simple : rien à créer d'avance.
 
-**En HTTP**, directement sur `https://previs.tarncompta.fr/mcp`, avec l'en-tête
-`x-previs-token` portant le jeton. C'est le plus simple quand le client MCP
-accepte un serveur distant.
+| Champ du formulaire | Valeur |
+|---|---|
+| Adresse du serveur | `https://previs.tarncompta.fr/mcp` |
+| ID client OAuth | *laisser vide* |
+| Secret client OAuth | *laisser vide* |
+
+Le connecteur s'enregistre de lui-même, puis ouvre un écran de consentement aux
+couleurs du cabinet : on y saisit son adresse et son mot de passe Previs. L'accès vaut
+alors pour ce compte, avec ses droits, et apparaît dans **Administration →
+Connecteurs autorisés** — le révoquer coupe l'accès immédiatement.
+
+Deux conditions, toutes deux remplies par l'installateur : le service doit être publié
+en **https**, et `PUBLIC_URL` doit porter cette adresse https. Les métadonnées OAuth
+publient `PUBLIC_URL` telle quelle, et un connecteur refuse un serveur d'autorisation en
+clair. Le service prévient au démarrage si l'adresse n'est pas en https.
+
+**En HTTP avec un jeton d'API** — Claude Code, un appel en ligne de commande. Créez le
+jeton dans **Administration → Jetons d'API** ; il n'est affiché qu'une seule fois, seule
+son empreinte est conservée. Adresse `https://previs.tarncompta.fr/mcp`, avec
+`Authorization: Bearer previs_…` ou l'en-tête `x-previs-token`.
 
 **En processus local**, avec le binaire fourni :
 

@@ -10,6 +10,8 @@ import { ServiceCabinet } from './cabinet.js';
 import { chargerConfiguration, type Configuration } from './config.js';
 import { DepotSqlite } from './depot.js';
 import { monterMcpHttp } from './mcpHttp.js';
+import { ServiceOauth } from './oauth.js';
+import { enregistrerRoutesOauth } from './oauthRoutes.js';
 import { fermerNavigateur } from './pdf/index.js';
 import { enregistrerRoutes } from './routes.js';
 
@@ -19,6 +21,7 @@ export interface Application {
   auth: ServiceAuthentification;
   depot: DepotSqlite;
   cabinet: ServiceCabinet;
+  oauth: ServiceOauth;
 }
 
 /** Construit l'application Fastify complète, sans l'écouter : utile aussi pour les essais. */
@@ -27,6 +30,7 @@ export async function construireApplication(config: Configuration): Promise<Appl
   const auth = new ServiceAuthentification(base);
   const depot = new DepotSqlite(base);
   const cabinet = new ServiceCabinet(base);
+  const oauth = new ServiceOauth(base);
 
   const app = Fastify({
     logger: { level: config.niveauJournal },
@@ -40,9 +44,12 @@ export async function construireApplication(config: Configuration): Promise<Appl
   // le double : la compression divise ces échanges par dix sur une liaison lente.
   await app.register(compression, { global: true, threshold: 1024, encodings: ['br', 'gzip', 'deflate'] });
   await app.register(cookie, { secret: config.secretSession });
-  enregistrerRoutes(app, { base, auth, depot, cabinet, config });
+  enregistrerRoutes(app, { base, auth, depot, cabinet, oauth, config });
+  await enregistrerRoutesOauth(app, { base, auth, oauth, cabinet, config });
 
-  if (config.mcpHttpActif) await monterMcpHttp(app, { auth, depot });
+  if (config.mcpHttpActif) {
+    await monterMcpHttp(app, { auth, depot, oauth, urlPublique: config.urlPublique });
+  }
 
   // ─── Interface construite ───────────────────────────────────────────────────
   if (existsSync(config.cheminStatique)) {
@@ -77,7 +84,7 @@ export async function construireApplication(config: Configuration): Promise<Appl
     base.close();
   });
 
-  return { app, base, auth, depot, cabinet };
+  return { app, base, auth, depot, cabinet, oauth };
 }
 
 /**
@@ -106,7 +113,12 @@ function ajouterEntetesSecurite(app: import('fastify').FastifyInstance): void {
   ].join('; ');
 
   app.addHook('onSend', async (_requete, reponse, charge) => {
-    reponse.header('content-security-policy', politique);
+    // L'écran de consentement OAuth pose la sienne, plus étroite, mais qui doit
+    // autoriser la soumission du formulaire vers l'adresse de retour du client :
+    // ne pas l'écraser.
+    if (!reponse.getHeader('content-security-policy')) {
+      reponse.header('content-security-policy', politique);
+    }
     reponse.header('x-content-type-options', 'nosniff');
     reponse.header('x-frame-options', 'DENY');
     reponse.header('referrer-policy', 'strict-origin-when-cross-origin');
@@ -162,6 +174,16 @@ async function demarrer(): Promise<void> {
   console.log(`  Previs écoute sur http://${config.host}:${config.port}`);
   console.log(`  Base de données : ${config.cheminBase}`);
   if (config.mcpHttpActif) console.log(`  Serveur MCP monté sur ${config.urlPublique}/mcp`);
+
+  // Les métadonnées OAuth publient PUBLIC_URL telle quelle. En clair, un connecteur
+  // refuse le serveur d'autorisation sans le dire clairement : mieux vaut l'annoncer ici.
+  if (config.production && !config.urlPublique.startsWith('https://')) {
+    console.warn(
+      `\n  PUBLIC_URL vaut « ${config.urlPublique} », en clair.\n` +
+        '  Les connecteurs OAuth (claude.ai, Claude Desktop) exigent HTTPS et refuseront\n' +
+        '  ce serveur d’autorisation. Renseigner l’adresse publique en https dans .env.\n',
+    );
+  }
 }
 
 // Le module est aussi importable pour les essais : on ne démarre que s'il est exécuté.
