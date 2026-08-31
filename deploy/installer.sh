@@ -23,6 +23,10 @@ DOMAINE="${DOMAINE:-previs.tarncompta.fr}"
 COURRIEL="${COURRIEL:-}"
 RACINE="${RACINE:-/opt/previs}"
 BOOTSTRAP_COURRIEL="${BOOTSTRAP_COURRIEL:-aymeric@tarncompta.fr}"
+NOM_VHOST="${NOM_VHOST:-previs}"
+# Marque apposée dans les fichiers que ce script écrit : elle seule l'autorise à
+# les réécrire. Tout fichier qui ne la porte pas appartient à quelqu'un d'autre.
+MARQUE="# Généré par Previs — deploy/installer.sh. Ne pas modifier à la main."
 UTILISATEUR="previs"
 PORT_INTERNE="${PORT_INTERNE:-}"
 BRANCHE="${BRANCHE:-main}"
@@ -37,6 +41,7 @@ while [[ $# -gt 0 ]]; do
     --domaine) DOMAINE="$2"; shift 2 ;;
     --courriel) COURRIEL="$2"; shift 2 ;;
     --compte) BOOTSTRAP_COURRIEL="$2"; shift 2 ;;
+    --nom-vhost) NOM_VHOST="$2"; shift 2 ;;
     --branche) BRANCHE="$2"; shift 2 ;;
     --racine) RACINE="$2"; shift 2 ;;
     --port) PORT_INTERNE="$2"; shift 2 ;;
@@ -175,8 +180,25 @@ if [[ -n "$PORT_INTERNE" ]]; then
 elif [[ -n "$PORT_EXISTANT" ]]; then
   # Relance : on garde le port déjà configuré. Le détecter à nouveau le trouverait
   # occupé — par Previs — et en choisirait un autre, désaccordant .env et nginx.
+  #
+  # Encore faut-il que ce soit bien Previs qui l'occupe. Sur un serveur partagé, un
+  # .env peut désigner un port entre-temps pris par un autre service : nginx
+  # renverrait alors previs.tarncompta.fr vers celui-là.
+  if port_occupe "$PORT_EXISTANT"; then
+    REPONSE="$(curl -fsS --max-time 5 "http://127.0.0.1:$PORT_EXISTANT/api/sante" 2>/dev/null || true)"
+    case "$REPONSE" in
+      *'"service":"previs"'*) ok "Port $PORT_EXISTANT repris de la configuration : c'est bien Previs qui l'occupe" ;;
+      *)
+        mauvais "Le port $PORT_EXISTANT figure dans $RACINE/.env, mais il est occupé par un service
+  qui n'est pas Previs — sa réponse à /api/sante : ${REPONSE:-aucune}.
+  Poursuivre ferait renvoyer $DOMAINE vers ce service.
+  Identifier l'occupant :  sudo ss -ltnp | grep :$PORT_EXISTANT
+  Puis choisir un autre port :  $0 --port 8081 …" ;;
+    esac
+  else
+    ok "Port repris de la configuration en place : $PORT_EXISTANT"
+  fi
   PORT_INTERNE="$PORT_EXISTANT"
-  ok "Port repris de la configuration en place : $PORT_INTERNE"
 else
   for candidat in 8080 8081 8082 8083 8084 8090 8091 8092; do
     if ! port_occupe "$candidat"; then PORT_INTERNE="$candidat"; break; fi
@@ -184,6 +206,30 @@ else
   [[ -n "$PORT_INTERNE" ]] || mauvais "Aucun port libre trouvé entre 8080 et 8092. En imposer un avec --port."
 fi
 ok "Previs écoutera sur 127.0.0.1:$PORT_INTERNE, jamais exposé directement"
+
+# ─── Ce qui appartient déjà à quelqu'un d'autre ───────────────────────────────
+# Ces deux contrôles doivent figurer dans l'inventaire : une simulation ne servirait
+# à rien si elle affichait un plan vert pour une exécution qui s'arrête à mi-chemin.
+if [[ $SIMULATION -eq 1 ]]; then obstacle() { avert "$@"; }; else obstacle() { mauvais "$@"; }; fi
+
+VHOST="/etc/nginx/sites-available/$NOM_VHOST"
+if [[ -f "$VHOST" ]] && ! grep -qF "$MARQUE" "$VHOST"; then
+  obstacle "$VHOST existe déjà et n'a pas été écrit par cet installateur.
+    L'écraser mettrait hors service le site qu'il dessert.
+    L'examiner :   sudo cat $VHOST
+    Puis soit le retirer, soit installer sous un autre nom :
+                   $0 --nom-vhost previs-financier …"
+else
+  ok "Hôte virtuel à écrire : $VHOST"
+fi
+
+AUTRE="$(grep -rlE "^[[:space:]]*server_name([[:space:]]|.*[[:space:]])$DOMAINE[[:space:];]" \
+  /etc/nginx/sites-enabled/ 2>/dev/null | grep -v "/$NOM_VHOST\$" | tr '\n' ' ' || true)"
+if [[ -n "${AUTRE// }" ]]; then
+  obstacle "$DOMAINE est déjà servi par un autre hôte virtuel : $AUTRE
+    Deux déclarations du même nom de domaine se disputeraient les requêtes.
+    Retirer l'ancienne, ou choisir un autre domaine pour Previs."
+fi
 
 # ─── Plan, et sortie en simulation ────────────────────────────────────────────
 if [[ $SIMULATION -eq 1 ]]; then
@@ -198,7 +244,7 @@ if [[ $SIMULATION -eq 1 ]]; then
   fi
   printf '   • créer le compte système « %s » et construire les quatre paquets\n' "$UTILISATEUR"
   printf '   • écrire /etc/systemd/system/previs.service et démarrer le service sur 127.0.0.1:%s\n' "$PORT_INTERNE"
-  printf '   • ajouter /etc/nginx/sites-available/previs pour %s — aucun autre hôte virtuel touché\n' "$DOMAINE"
+  printf '   • ajouter /etc/nginx/sites-available/%s pour %s — aucun autre hôte virtuel touché\n' "$NOM_VHOST" "$DOMAINE"
   [[ $SANS_TLS -eq 0 ]] && printf '   • obtenir un certificat pour %s seulement\n' "$DOMAINE"
   if [[ $PARE_FEU -eq 1 ]]; then
     printf '   • ouvrir 80 et 443 dans ufw (sans activer le pare-feu s’il est inactif)\n'
@@ -467,13 +513,16 @@ fi
 
 # ─── nginx et certificat ──────────────────────────────────────────────────────
 etape "nginx"
+
+
 install -d -m 0755 /var/www/certbot
 # L'hôte virtuel par défaut n'est PAS retiré : ce peut être un site en service.
 # Le nôtre porte server_name $DOMAINE, nginx route par nom, la cohabitation va de soi.
 
 # Première phase : un hôte virtuel en HTTP seul. Le fichier complet du dépôt
 # référence des certificats qui n'existent pas encore ; nginx refuserait de démarrer.
-cat > /etc/nginx/sites-available/previs <<VHOST
+cat > "$VHOST" <<CONFIG_VHOST
+$MARQUE
 server {
     listen 80;
     listen [::]:80;
@@ -489,8 +538,8 @@ server {
     }
     client_max_body_size 20m;
 }
-VHOST
-ln -sf /etc/nginx/sites-available/previs /etc/nginx/sites-enabled/previs
+CONFIG_VHOST
+ln -sf "$VHOST" "/etc/nginx/sites-enabled/$NOM_VHOST"
 nginx -t >/dev/null 2>&1 || mauvais "Configuration nginx invalide : nginx -t"
 systemctl reload nginx || systemctl start nginx
 ok "Hôte virtuel HTTP en place pour $DOMAINE"
@@ -508,8 +557,11 @@ if [[ $SANS_TLS -eq 0 ]]; then
 
   # Seconde phase : l'hôte virtuel complet du dépôt, avec TLS et les réglages
   # propres à l'export PDF et au point d'entrée MCP.
-  sed -e "s/previs\.tarncompta\.fr/$DOMAINE/g" -e "s/127\.0\.0\.1:8080/127.0.0.1:$PORT_INTERNE/g" \
-    "$RACINE/deploy/nginx.previs.conf" > /etc/nginx/sites-available/previs
+  { printf '%s\n' "$MARQUE"
+    sed -e "s/previs\.tarncompta\.fr/$DOMAINE/g" \
+        -e "s/127\.0\.0\.1:8080/127.0.0.1:$PORT_INTERNE/g" \
+        "$RACINE/deploy/nginx.previs.conf"
+  } > "$VHOST"
   nginx -t >/dev/null 2>&1 || mauvais "Configuration nginx invalide après passage en HTTPS : nginx -t"
   systemctl reload nginx
   ok "HTTPS actif, redirection du port 80 en place"
