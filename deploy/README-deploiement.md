@@ -85,6 +85,12 @@ cd /opt/previs && sudo ./deploy/installer.sh \
    l'adresse `https://previs.tarncompta.fr/mcp` — ni identifiant ni secret de client,
    voir l'étape 6. Pour Claude Code ou un appel en ligne de commande, créer un jeton
    d'API dans **Administration**.
+5. Enregistrer une clé d'accès depuis **Mon compte → Clés d'accès**, sur son téléphone ou
+   son ordinateur. La connexion se fait ensuite sans saisir ni adresse ni mot de passe, et
+   un faux courriel menant à un site qui ressemble à Previs n'obtient rien : la clé ne
+   signe que pour `previs.tarncompta.fr`. Cela suppose le service publié en **https** —
+   ce que fait l'installateur ; sur une installation en clair, les clés se désactivent
+   d'elles-mêmes et l'écran dit pourquoi.
 
 ### Si quelque chose cloche
 

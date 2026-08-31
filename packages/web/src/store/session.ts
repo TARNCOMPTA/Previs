@@ -1,6 +1,7 @@
 import type { Utilisateur } from '@previs/core';
 import { create } from 'zustand';
 import { api, definirSurDeconnexion } from '../api/client.js';
+import { connexionParCle } from '../api/cles.js';
 
 type Theme = 'clair' | 'sombre';
 
@@ -10,6 +11,7 @@ interface EtatSession {
   theme: Theme;
   verifier: () => Promise<void>;
   connecter: (email: string, motDePasse: string) => Promise<void>;
+  connecterParCle: () => Promise<void>;
   deconnecter: () => Promise<void>;
   basculerTheme: () => void;
 }
@@ -52,6 +54,10 @@ export const useSession = create<EtatSession>((set, get) => ({
   async connecter(email, motDePasse) {
     const { utilisateur } = await api.connexion(email, motDePasse);
     set({ utilisateur });
+  },
+
+  async connecterParCle() {
+    set({ utilisateur: await connexionParCle() });
   },
 
   async deconnecter() {

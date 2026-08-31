@@ -199,6 +199,14 @@ export interface ErreurApi {
   erreur: string;
   code:
     | 'non_authentifie'
+    /**
+     * Un identifiant soumis a été refusé : mot de passe faux, clé d'accès non reconnue.
+     *
+     * Distinct de « non_authentifie », qui signale une session absente ou expirée. Les
+     * deux répondent 401, mais l'interface doit les traiter autrement : le premier
+     * s'affiche à l'écran où l'on vient de saisir, le second renvoie à la connexion.
+     */
+    | 'identifiant_refuse'
     | 'interdit'
     | 'introuvable'
     | 'conflit_version'

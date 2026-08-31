@@ -393,6 +393,34 @@ export class ServiceOauth {
     );
   }
 
+  /**
+   * Révoque tout ce qui a été émis à un compte, pour tous les clients.
+   *
+   * C'est ce que doit faire un changement de mot de passe : un connecteur autorisé
+   * garde sinon trente jours d'accès aux dossiers, accordé avec le mot de passe qu'on
+   * vient justement de changer.
+   */
+  revoquerPourUtilisateur(utilisateurId: string): number {
+    const maintenant = new Date().toISOString();
+
+    // Les codes en attente comptent autant que les jetons. Un code émis mais pas encore
+    // échangé vaut un couple de jetons neuf pour trente jours : le laisser vivre
+    // laisserait l'accès rouvrir juste après la révocation.
+    this.base
+      .prepare(
+        `UPDATE oauth_codes SET consomme_le = ?
+         WHERE utilisateur_id = ? AND consomme_le IS NULL`,
+      )
+      .run(maintenant, utilisateurId);
+
+    return this.base
+      .prepare(
+        `UPDATE oauth_jetons SET revoque_le = ?
+         WHERE utilisateur_id = ? AND revoque_le IS NULL`,
+      )
+      .run(maintenant, utilisateurId).changes;
+  }
+
   /** Révoque tout ce qui a été émis à un compte pour un client donné. */
   revoquerPourClient(utilisateurId: string, clientId: string): number {
     return this.base

@@ -165,6 +165,40 @@ function migrer(base: BaseDonnees): void {
       cree_le         TEXT NOT NULL
     );
 
+    -- ─── Clés d'accès (WebAuthn) ────────────────────────────────────────────
+    -- Rien ici n'est secret : une clé publique et un identifiant de justificatif sont
+    -- des données publiques par construction. Ce qui protège, c'est que la clé privée
+    -- ne quitte jamais l'appareil du porteur — pas la confidentialité de cette table.
+    -- L'identifiant du justificatif est UNIQUE dans toute la base : l'attestation
+    -- n'étant pas demandée, il est choisi par le client, et sans cette contrainte un
+    -- compte pourrait déclarer celui d'un collègue en l'accompagnant de sa propre clé.
+    CREATE TABLE IF NOT EXISTS cles_acces (
+      id                   TEXT PRIMARY KEY,
+      utilisateur_id       TEXT NOT NULL REFERENCES utilisateurs(id) ON DELETE CASCADE,
+      identifiant_cle      TEXT NOT NULL UNIQUE,
+      cle_publique         TEXT NOT NULL,
+      compteur             INTEGER NOT NULL DEFAULT 0,
+      transports           TEXT NOT NULL DEFAULT '',
+      libelle              TEXT NOT NULL DEFAULT '',
+      synchronisee         INTEGER NOT NULL DEFAULT 0,
+      cree_le              TEXT NOT NULL,
+      derniere_utilisation TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_cles_utilisateur ON cles_acces(utilisateur_id);
+
+    -- Le défi d'une cérémonie reste au serveur : le client n'en reçoit qu'un
+    -- identifiant opaque. Un défi que le client renverrait serait un défi qu'il
+    -- choisit, et une assertion captée une fois vaudrait indéfiniment.
+    CREATE TABLE IF NOT EXISTS webauthn_defis (
+      id             TEXT PRIMARY KEY,
+      defi           TEXT NOT NULL,
+      genre          TEXT NOT NULL CHECK (genre IN ('enregistrement', 'connexion')),
+      utilisateur_id TEXT REFERENCES utilisateurs(id) ON DELETE CASCADE,
+      expire_le      TEXT NOT NULL,
+      cree_le        TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_defis_expiration ON webauthn_defis(expire_le);
+
     CREATE TABLE IF NOT EXISTS journal_audit (
       id             INTEGER PRIMARY KEY AUTOINCREMENT,
       horodatage     TEXT NOT NULL,
@@ -228,5 +262,9 @@ export function purgerSessions(base: BaseDonnees): number {
     .run(maintenant, new Date(Date.now() - 86400000).toISOString());
   base.prepare('DELETE FROM oauth_demandes WHERE expire_le < ?').run(maintenant);
   base.prepare('DELETE FROM oauth_jetons WHERE expire_le < ?').run(maintenant);
+
+  // Le point d'entrée qui émet un défi de connexion est nécessairement public : sans
+  // cette purge, une boucle anonyme ferait grossir la table jusqu'à remplir le disque.
+  base.prepare('DELETE FROM webauthn_defis WHERE expire_le < ?').run(maintenant);
   return n;
 }

@@ -3,6 +3,7 @@ import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { Chargement } from './ui/divers.js';
 import { CoquilleDossier } from './layout/CoquilleDossier.js';
 import { Administration } from './pages/Administration.js';
+import { Compte } from './pages/Compte.js';
 import { Connexion } from './pages/Connexion.js';
 import { ListeDossiers } from './pages/ListeDossiers.js';
 import { TableauDeBord } from './pages/TableauDeBord.js';
@@ -51,6 +52,7 @@ export function App() {
         <Route path="/connexion" element={<Navigate to="/" replace />} />
         <Route path="/" element={<ListeDossiers />} />
         <Route path="/administration" element={<Administration />} />
+        <Route path="/compte" element={<Compte />} />
 
         <Route path="/dossiers/:id" element={<CoquilleDossier />}>
           <Route index element={<Navigate to="tableau-de-bord" replace />} />

@@ -40,6 +40,7 @@ server/src/depot.ts      persistance, versions, verrouillage optimiste
 server/src/cabinet.ts    identité du cabinet et contrôle des logos déposés
 server/src/oauth.ts      serveur d'autorisation OAuth 2.1 du point d'entrée MCP
 server/src/oauthRoutes.ts découverte, consentement, jetons, révocation
+server/src/cles.ts       clés d'accès WebAuthn : cérémonies, défis, vérification
 server/src/pdf/          document HTML imprimé par Chromium
 mcp/src/outils.ts        les quinze outils exposés à l'assistant
 web/src/store/dossier.ts état, recalcul, enregistrement différé, synchronisation
@@ -107,7 +108,7 @@ premier démarrage, tout le reste vient de l'écran Administration.
 
 ```bash
 npm run typecheck      # les quatre paquets
-npm test               # 70 essais du moteur et du modèle, 87 essais du serveur
+npm test               # 70 essais du moteur et du modèle, 140 essais du serveur
 npm run build
 ```
 
@@ -134,7 +135,7 @@ connexion par adresse **et** par compte. Ne jamais consigner un mot de passe, un
 jeton en clair ou le contenu d'un dossier dans les journaux. Le serveur refuse de
 démarrer en production sans `SESSION_SECRET`.
 
-Cinq règles à ne pas défaire :
+Sept règles à ne pas défaire :
 
 1. **Un chemin d'opération est borné.** `resoudreChemin()` n'accepte que les sept
    sections du dossier, refuse `__proto__`, `prototype` et `constructor`, et ne
@@ -154,6 +155,25 @@ Cinq règles à ne pas défaire :
    L'adresse de redirection d'un client est vérifiée **avant** toute redirection, sans
    quoi le serveur d'autorisation devient une redirection ouverte.
 
-`packages/core/test/securite.test.ts`, `packages/server/test/securite.test.ts` et
-`packages/server/test/oauth.test.ts` verrouillent ces points. Un échec y signale une
-protection retirée, pas un chiffre qui a bougé.
+6. **Une cérémonie WebAuthn ne prouve rien sans ses cinq contrôles.** Le défi vient du
+   serveur et n'y revient jamais — il est consommé par un unique `DELETE … RETURNING`,
+   car lire puis vérifier puis supprimer laisse deux requêtes concurrentes franchir le
+   même. L'origine et l'identifiant de partie de confiance viennent de `PUBLIC_URL`,
+   jamais de l'en-tête `Host`. Le genre du défi distingue enregistrement et connexion. Le
+   porteur annoncé est exigé et rapproché de la clé trouvée en base. La vérification du
+   porteur est exigée. Le compteur est laissé à la bibliothèque : exiger une progression
+   stricte casserait toutes les clés synchronisées, qui rapportent zéro à vie.
+7. **Poser une clé d'accès exige le mot de passe actuel, et une session de l'interface.**
+   `exiger({ navigateur: true })` refuse un jeton d'API — qui vit en clair dans un fichier
+   de configuration — sur le mot de passe comme sur les clés. Sans la preuve fraîche, une
+   session dérobée deviendrait un accès durable qu'un changement de mot de passe ne
+   refermerait pas.
+
+`packages/core/test/securite.test.ts`, `packages/server/test/securite.test.ts`,
+`packages/server/test/oauth.test.ts` et `packages/server/test/cles.test.ts` verrouillent
+ces points. Un échec y signale une protection retirée, pas un chiffre qui a bougé.
+
+Dans `cles.test.ts`, un authentificateur factice signe pour de vrai et sait aussi mal se
+comporter : signer pour une autre origine, pour un autre domaine, omettre la vérification
+du porteur, annoncer le porteur d'un autre compte, faire régresser son compteur. Un
+contrôle qu'on ne peut pas mettre en défaut n'est pas éprouvé.

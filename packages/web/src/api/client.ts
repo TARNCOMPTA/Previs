@@ -1,6 +1,11 @@
 import type {
+  PublicKeyCredentialCreationOptionsJSON,
+  PublicKeyCredentialRequestOptionsJSON,
+} from '@simplewebauthn/browser';
+import type {
   AutorisationOauth,
   Cabinet,
+  CleAcces,
   DossierEnregistre,
   ErreurApi,
   JetonApi,
@@ -41,9 +46,25 @@ async function appeler<T>(chemin: string, options: Options = {}): Promise<T> {
     body: options.corps !== undefined ? JSON.stringify(options.corps) : undefined,
   });
 
+  // Un 401 n'a pas le même sens partout, et c'est le serveur qui le dit — pas une liste
+  // de chemins tenue ici, qui se serait trompée dès qu'une route aurait bougé.
+  // « identifiant_refuse » répond à une saisie : le message s'affiche là où l'on vient de
+  // saisir. Tout autre 401 est une session absente ou expirée, et renvoie à la connexion.
   if (reponse.status === 401) {
-    surDeconnexion?.();
-    throw new ErreurRequete('non_authentifie', 'Session expirée. Veuillez vous reconnecter.', undefined, 401);
+    let code = '';
+    let message = '';
+    try {
+      const charge = (await reponse.clone().json()) as Partial<ErreurApi>;
+      code = charge.code ?? '';
+      message = charge.erreur ?? '';
+    } catch {
+      // Corps illisible : on retombe sur le cas le plus fréquent, la session perdue.
+    }
+    if (code !== 'identifiant_refuse') {
+      surDeconnexion?.();
+      throw new ErreurRequete('non_authentifie', 'Session expirée. Veuillez vous reconnecter.', undefined, 401);
+    }
+    throw new ErreurRequete('identifiant_refuse', message || 'Identifiant refusé.', undefined, 401);
   }
 
   if (!reponse.ok) {
@@ -74,8 +95,44 @@ export const api = {
     }),
   deconnexion: () => appeler<{ deconnecte: boolean }>('/api/auth/deconnexion', { methode: 'POST' }),
   moi: () => appeler<{ utilisateur: Utilisateur; origine: string }>('/api/auth/moi'),
-  changerMotDePasse: (ancien: string, nouveau: string) =>
-    appeler<{ modifie: boolean }>('/api/auth/motdepasse', { methode: 'POST', corps: { ancien, nouveau } }),
+  changerMotDePasse: (ancien: string, nouveau: string, revoquerConnecteurs = true) =>
+    appeler<{ modifie: boolean; connecteursRevoques: number }>('/api/auth/motdepasse', {
+      methode: 'POST',
+      corps: { ancien, nouveau, revoquerConnecteurs },
+    }),
+
+  // ─── Clés d'accès ─────────────────────────────────────────────────────────
+  // Les réponses d'authentificateur ne sont pas typées ici : elles viennent de
+  // « @simplewebauthn/browser » et ne traversent ce module que pour être postées.
+  optionsConnexionCle: () =>
+    appeler<{ demande: string; options: PublicKeyCredentialRequestOptionsJSON }>(
+      '/api/auth/cles/connexion/options',
+      { methode: 'POST' },
+    ),
+  connexionParCle: (demande: string, reponse: unknown) =>
+    appeler<{ utilisateur: Utilisateur }>('/api/auth/cles/connexion', {
+      methode: 'POST',
+      corps: { demande, reponse },
+    }),
+  listerCles: () =>
+    appeler<{ cles: CleAcces[]; actives: boolean; motif: string }>('/api/auth/cles'),
+  optionsEnregistrementCle: (motDePasse: string) =>
+    appeler<{ demande: string; options: PublicKeyCredentialCreationOptionsJSON }>(
+      '/api/auth/cles/enregistrement',
+      { methode: 'POST', corps: { motDePasse } },
+    ),
+  enregistrerCle: (demande: string, libelle: string, reponse: unknown) =>
+    appeler<CleAcces>('/api/auth/cles', { methode: 'POST', corps: { demande, libelle, reponse } }),
+  supprimerCle: (id: string) =>
+    appeler<{ supprime: boolean }>(`/api/auth/cles/${id}`, { methode: 'DELETE' }),
+
+  /** Clés d'un autre compte : un administrateur les voit et les retire, jamais n'en pose. */
+  clesDuCompte: (utilisateurId: string) =>
+    appeler<{ cles: CleAcces[] }>(`/api/utilisateurs/${utilisateurId}/cles`),
+  retirerCleDuCompte: (utilisateurId: string, cleId: string) =>
+    appeler<{ supprime: boolean }>(`/api/utilisateurs/${utilisateurId}/cles/${cleId}`, {
+      methode: 'DELETE',
+    }),
 
   // ─── Dossiers ─────────────────────────────────────────────────────────────
   listerDossiers: () => appeler<ResumeDossier[]>('/api/dossiers'),

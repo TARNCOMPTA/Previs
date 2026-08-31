@@ -93,7 +93,7 @@ npm run dev            # serveur sur :8080, interface sur :5173
 Autres commandes :
 
 ```bash
-npm test               # 46 tests du moteur de calcul
+npm test               # 70 essais du moteur et du modèle, 132 essais du serveur
 npm run typecheck      # TypeScript strict sur les quatre paquets
 npm run build          # construit les quatre paquets
 ```
@@ -104,6 +104,65 @@ compte au démarrage.
 
 La génération PDF a besoin de Chromium : renseignez `CHROMIUM_PATH` si le
 binaire n'est pas dans `/usr/bin/chromium`.
+
+---
+
+## Se connecter
+
+Deux moyens, et le premier reste toujours possible.
+
+### Mot de passe
+
+Haché par scrypt. Dix caractères au moins. Deux compteurs indépendants arrêtent un
+essai en série : dix échecs par adresse et par quart d'heure, vingt par compte et par
+heure. Chacun change le sien depuis **Mon compte** — y compris un compte en lecture
+seule, car sécuriser son compte n'est pas une écriture métier.
+
+Le changement ferme toutes les sessions du compte, et propose — case cochée par défaut —
+de révoquer aussi ses connecteurs OAuth : ils ont été autorisés avec le mot de passe
+qu'on vient de changer, et leur accès vaut trente jours. Les clés d'accès, elles, sont
+laissées en place : les effacer priverait le compte de son moyen le plus sûr au moment
+même où il réagit à une alerte.
+
+### Clé d'accès
+
+Une clé d'accès — passkey — remplace le mot de passe par le déverrouillage de l'appareil :
+Face ID, empreinte, code. La clé privée ne quitte jamais l'appareil et **ne signe que
+pour le domaine où elle a été créée** : un faux courriel menant à un site qui ressemble à
+Previs n'obtient rien. C'est la seule raison de l'ajouter.
+
+On l'enregistre depuis **Mon compte → Clés d'accès**, sur son appareil personnel. Le mot
+de passe actuel est redemandé à ce moment-là : sans cela, une session dérobée suffirait à
+poser un accès durable qu'un changement de mot de passe ne refermerait pas. Ensuite,
+l'écran de connexion offre « Se connecter avec une clé d'accès » — **sans saisir ni
+adresse ni mot de passe** : la clé est découvrable, c'est l'authentificateur qui dit quel
+compte il ouvre.
+
+Dix clés par compte. Un administrateur voit et retire les clés d'un autre compte —
+répondre à « quelqu'un a-t-il greffé une clé sur ce compte ? », et fermer la porte quand
+le titulaire est absent — mais aucune route ne lui permet d'en poser une pour autrui.
+
+Ce qui tient la sûreté du procédé :
+
+| Exigence | Comment |
+|---|---|
+| Le défi ne vient jamais du client | Il reste en base, le client ne reçoit qu'un identifiant opaque, et il est consommé par un unique `DELETE … RETURNING` — lire puis vérifier puis supprimer laisserait deux requêtes concurrentes franchir le même |
+| Un défi ne vaut que pour sa cérémonie | La colonne `genre` distingue enregistrement et connexion ; un défi de l'un est refusé à l'autre |
+| L'origine et le domaine viennent de `PUBLIC_URL` | Jamais de l'en-tête `Host`, que n'importe quel client forge — sinon l'attaquant choisit pour quel domaine la signature vaut |
+| Le porteur est exigé et rapproché | L'authentificateur annonce le compte qu'il ouvre ; une discordance avec la clé trouvée en base est un refus |
+| La vérification du porteur est exigée | Sans code ni biométrie, un appareil ramassé ouvrirait le compte |
+| Le compteur est laissé à la bibliothèque | Elle refuse une régression — signe d'un authentificateur cloné — et saute le contrôle quand il vaut zéro de part et d'autre : une clé synchronisée rapporte zéro à vie, un contrôle maison plus strict les casserait toutes |
+| Un échec ne dit rien | Clé inconnue, signature invalide, compte désactivé : le même message |
+| Aucun message de la bibliothèque n'est restitué | Selon le contrôle qui échoue, il recopie le défi |
+
+Les clés d'accès exigent un contexte sûr : **https**, ou la boucle locale. Sur une
+installation en clair, elles se désactivent d'elles-mêmes et l'écran le dit, avec ce
+qu'il faut corriger. Le mot de passe, lui, fonctionne partout.
+
+> L'écran de consentement OAuth ne connaît que le mot de passe. Y faire fonctionner une
+> clé d'accès demanderait un script, donc de relâcher sa politique de contenu
+> `default-src 'none'` sur la page même dont `form-action` intègre une origine venue du
+> client. C'est un compromis que nous refusons.
 
 ---
 
@@ -237,14 +296,24 @@ posées par le service lui-même, jamais déléguées au seul reverse-proxy :
 | Jeton de rafraîchissement dérobé | Rotation à chaque échange ; le rejeu de l'ancien révoque la lignée entière du compte pour ce client |
 | Paramètres d'autorisation modifiés à la soumission | Le formulaire de consentement ne porte qu'un identifiant opaque : les paramètres restent au serveur |
 | Écritures anonymes en boucle | Enregistrement de client et ouverture de demande plafonnés à trente par adresse et par quart d'heure |
+| Faux site imitant Previs | Une clé d'accès ne signe que pour le domaine où elle a été créée ; l'origine attendue vient de `PUBLIC_URL`, jamais de l'en-tête `Host` |
+| Assertion WebAuthn rejouée | Le défi reste au serveur et disparaît à son premier usage, par une écriture unique et conditionnelle |
+| Authentificateur cloné | Le compteur de signature est conservé et confié à la bibliothèque, qui refuse une régression sans casser les clés synchronisées |
+| Clé posée depuis une session dérobée | Le mot de passe actuel est exigé pour enregistrer une clé, sur le compteur d'essais du changement de mot de passe |
+| Jeton d'API transformé en session d'interface | `exiger({ navigateur: true })` refuse l'origine « mcp » sur le mot de passe et sur les clés |
+| Connecteur qui survit au changement de mot de passe | La révocation des autorisations OAuth du compte est proposée avec le changement, cochée par défaut |
 
 Chaque point est verrouillé par un essai : `packages/core/test/securite.test.ts` pour le
 modèle et les opérations, `packages/server/test/securite.test.ts` pour l'API,
-`packages/server/test/oauth.test.ts` pour le serveur d'autorisation.
+`packages/server/test/oauth.test.ts` pour le serveur d'autorisation, et
+`packages/server/test/cles.test.ts` pour les clés d'accès — où un authentificateur
+factice signe pour de vrai et sait aussi mal se comporter : signer pour une autre
+origine, omettre la vérification du porteur, faire régresser son compteur.
 
 Le journal d'audit consigne connexions, échecs de connexion, changements de mot de
-passe, créations et suppressions de comptes et de jetons, enregistrements de clients
-OAuth, consentements accordés ou refusés, révocations d'autorisation, et exports PDF. Il
+passe, créations et suppressions de comptes et de jetons, enregistrements et retraits de
+clés d'accès, connexions par clé, enregistrements de clients OAuth, consentements accordés
+ou refusés, révocations d'autorisation, et exports PDF. Il
 ne consigne jamais un mot de passe, un jeton en clair ni le contenu d'un dossier.
 
 ## Déploiement

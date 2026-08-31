@@ -4,6 +4,10 @@ import {
   zRequeteConnexion,
   zRequeteCreation,
   zRequeteEnregistrement,
+  zChangementMotDePasse,
+  zConnexionCle,
+  zDemandeEnregistrementCle,
+  zEnregistrementCle,
   zRequeteCabinet,
   zRequeteJeton,
   zRequeteLogo,
@@ -17,6 +21,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import {
   auteurDe,
+  DUREE_SESSION_JOURS,
   exiger,
   identifier,
   NOM_COOKIE,
@@ -27,6 +32,7 @@ import { journaliser, type BaseDonnees } from './base.js';
 import { verifierLogo, type ServiceCabinet } from './cabinet.js';
 import type { DepotSqlite } from './depot.js';
 import type { ServiceOauth } from './oauth.js';
+import { ErreurCle, type ServiceClesAcces } from './cles.js';
 import type { Configuration } from './config.js';
 import {
   empreinteJeton,
@@ -42,6 +48,7 @@ interface Contexte {
   depot: DepotSqlite;
   cabinet: ServiceCabinet;
   oauth: ServiceOauth;
+  cles: ServiceClesAcces;
   config: Configuration;
 }
 
@@ -144,6 +151,26 @@ export function enregistrerRoutes(app: FastifyInstance, ctx: Contexte): void {
   const parCompte = new LimiteurConnexions(20, 60 * 60 * 1000);
   // Un export lance un rendu Chromium : trente par quart d'heure et par compte.
   const debitPdf = new LimiteurDebit(30, 15 * 60 * 1000);
+  // Les deux points d'entrée publics des clés d'accès : plafond par adresse, sur le
+  // modèle du flux OAuth, pour qu'un anonyme ne puisse ni gonfler la table des défis
+  // ni faire tourner la vérification en boucle.
+  const debitCles = new LimiteurDebit(30, 15 * 60 * 1000);
+
+  /**
+   * Pose le cookie de session — un seul endroit, quel que soit le moyen employé.
+   *
+   * Deux appels recopiés à la main sont l'endroit où l'un des deux perd « secure » ou
+   * s'écarte de la durée réelle de la session en base.
+   */
+  const poserCookieSession = (reponse: import('fastify').FastifyReply, session: string) => {
+    reponse.setCookie(NOM_COOKIE, session, {
+      httpOnly: true,
+      sameSite: 'lax',
+      secure: ctx.config.cookiesSecurises,
+      path: '/',
+      maxAge: DUREE_SESSION_JOURS * 86400,
+    });
+  };
 
   // ─── État du service ────────────────────────────────────────────────────────
   // Route publique : elle sert à la surveillance du service et ne doit donc rien
@@ -175,17 +202,11 @@ export function enregistrerRoutes(app: FastifyInstance, ctx: Contexte): void {
         });
         return reponse
           .code(401)
-          .send({ erreur: 'Adresse ou mot de passe incorrect.', code: 'non_authentifie' });
+          .send({ erreur: 'Adresse ou mot de passe incorrect.', code: 'identifiant_refuse' });
       }
       parAdresse.succes(adresse);
       parCompte.succes(compte);
-      reponse.setCookie(NOM_COOKIE, resultat.session, {
-        httpOnly: true,
-        sameSite: 'lax',
-        secure: ctx.config.cookiesSecurises,
-        path: '/',
-        maxAge: 30 * 86400,
-      });
+      poserCookieSession(reponse, resultat.session);
       journaliser(ctx.base, {
         utilisateur: resultat.utilisateur.nom,
         origine: 'interface',
@@ -213,11 +234,12 @@ export function enregistrerRoutes(app: FastifyInstance, ctx: Contexte): void {
 
   app.post('/api/auth/motdepasse', async (requete, reponse) => {
     const identite = identifier(ctx.auth, requete);
-    if (!exiger(identite, reponse, { ecriture: true })) return;
+    // « navigateur » et non « ecriture » : changer son propre mot de passe n'est pas une
+    // écriture métier, un compte en lecture seule doit pouvoir le faire ; et un jeton
+    // d'API ne doit pas pouvoir s'approprier le compte qui l'a émis.
+    if (!exiger(identite, reponse, { navigateur: true })) return;
     try {
-      const { ancien, nouveau } = z
-        .object({ ancien: z.string().min(1), nouveau: z.string().min(10).max(200) })
-        .parse(requete.body);
+      const { ancien, nouveau, revoquerConnecteurs } = zChangementMotDePasse.parse(requete.body);
 
       // Même plafond que la connexion : sans lui, une session volée permettrait
       // d'essayer le mot de passe actuel sans limite pour s'approprier le compte.
@@ -233,20 +255,236 @@ export function enregistrerRoutes(app: FastifyInstance, ctx: Contexte): void {
         parCompte.echec(cle);
         return reponse
           .code(401)
-          .send({ erreur: 'Le mot de passe actuel est incorrect.', code: 'non_authentifie' });
+          .send({ erreur: 'Le mot de passe actuel est incorrect.', code: 'identifiant_refuse' });
       }
       parCompte.succes(cle);
       await ctx.auth.changerMotDePasse(identite.utilisateur.id, nouveau);
+
+      // Fermer les sessions ne suffit pas : une autorisation OAuth a été accordée avec
+      // le mot de passe qu'on vient de changer, et son jeton de rafraîchissement vaut
+      // trente jours. Les clés d'accès, elles, ne dépendent pas du mot de passe et sont
+      // laissées en place — les effacer priverait le compte de son moyen le plus sûr au
+      // moment même où il réagit à une alerte.
+      const connecteursRevoques = revoquerConnecteurs
+        ? ctx.oauth.revoquerPourUtilisateur(identite.utilisateur.id)
+        : 0;
+
       journaliser(ctx.base, {
         utilisateur: identite.utilisateur.nom,
         origine: identite.origine,
         action: 'changement_mot_de_passe',
         cible: identite.utilisateur.id,
+        detail: revoquerConnecteurs ? `${connecteursRevoques} jeton(s) OAuth révoqué(s)` : '',
       });
       reponse.clearCookie(NOM_COOKIE, { path: '/' });
-      return { modifie: true };
+      return { modifie: true, connecteursRevoques };
     } catch (erreur) {
       return repondreErreur(erreur, reponse, ctx.config.production);
+    }
+  });
+
+  // ─── Clés d'accès (WebAuthn) ────────────────────────────────────────────────
+  //
+  // Trois points d'entrée publics par nécessité — on ne peut pas être authentifié pour
+  // se connecter — et trois réservés à une session ouverte depuis l'interface.
+
+  /** Convertit une erreur de cérémonie en réponse, sans détail exploitable. */
+  const repondreErreurCle = (erreur: unknown, reponse: import('fastify').FastifyReply) => {
+    if (erreur instanceof ErreurCle) {
+      // Un 401 d'une cérémonie répond toujours à une clé présentée, jamais à une session
+      // perdue : l'interface doit afficher le message, non renvoyer à la connexion.
+      return reponse
+        .code(erreur.statut)
+        .send({ erreur: erreur.message, code: erreur.statut === 401 ? 'identifiant_refuse' : 'interdit' });
+    }
+    return repondreErreur(erreur, reponse, ctx.config.production);
+  };
+
+  app.get('/api/auth/cles', async (requete, reponse) => {
+    const identite = identifier(ctx.auth, requete);
+    if (!exiger(identite, reponse, { navigateur: true })) return;
+    return {
+      cles: ctx.cles.lister(identite.utilisateur.id),
+      actives: ctx.cles.actives,
+      motif: ctx.cles.motifIndisponible,
+    };
+  });
+
+  app.post('/api/auth/cles/enregistrement', async (requete, reponse) => {
+    const identite = identifier(ctx.auth, requete);
+    if (!exiger(identite, reponse, { navigateur: true })) return;
+    try {
+      const { motDePasse } = zDemandeEnregistrementCle.parse(requete.body);
+
+      // Chaque ouverture coûte une vérification scrypt, soit seize mégaoctets de mémoire :
+      // le compteur d'échecs ne borne rien tant que le mot de passe est juste.
+      if (!debitCles.autoriser(`enrolement:${identite.utilisateur.id}`)) {
+        return reponse
+          .code(429)
+          .send({ erreur: 'Trop de demandes. Réessayer dans quelques minutes.', code: 'interdit' });
+      }
+
+      // Le mot de passe actuel est exigé : sans lui, une session dérobée suffirait à
+      // poser un accès durable que le changement de mot de passe ne refermerait pas.
+      // Le compteur est celui du changement de mot de passe, à dessein : deux clés
+      // distinctes offriraient deux budgets d'essais du même secret.
+      const cle = `motdepasse:${identite.utilisateur.id}`;
+      if (parCompte.bloque(cle)) {
+        return reponse
+          .code(429)
+          .send({ erreur: 'Trop de tentatives. Réessayer dans quelques minutes.', code: 'interdit' });
+      }
+      if (!(await ctx.auth.verifierIdentifiants(identite.utilisateur.email, motDePasse))) {
+        parCompte.echec(cle);
+        return reponse
+          .code(401)
+          .send({ erreur: 'Le mot de passe actuel est incorrect.', code: 'identifiant_refuse' });
+      }
+      parCompte.succes(cle);
+
+      return await ctx.cles.debuterEnregistrement(identite.utilisateur);
+    } catch (erreur) {
+      return repondreErreurCle(erreur, reponse);
+    }
+  });
+
+  app.post('/api/auth/cles', async (requete, reponse) => {
+    const identite = identifier(ctx.auth, requete);
+    if (!exiger(identite, reponse, { navigateur: true })) return;
+    try {
+      const { demande, libelle, reponse: assertion } = zEnregistrementCle.parse(requete.body);
+      const enregistree = await ctx.cles.acheverEnregistrement({
+        demande,
+        utilisateurId: identite.utilisateur.id,
+        libelle,
+        reponse: assertion,
+      });
+      journaliser(ctx.base, {
+        utilisateur: identite.utilisateur.nom,
+        origine: 'interface',
+        action: 'enregistrement_cle_acces',
+        cible: enregistree.id,
+        detail: enregistree.libelle,
+      });
+      return enregistree;
+    } catch (erreur) {
+      return repondreErreurCle(erreur, reponse);
+    }
+  });
+
+  app.delete('/api/auth/cles/:id', async (requete, reponse) => {
+    const identite = identifier(ctx.auth, requete);
+    if (!exiger(identite, reponse, { navigateur: true })) return;
+    const { id } = requete.params as { id: string };
+    const retiree = ctx.cles.supprimer(identite.utilisateur.id, id);
+    if (!retiree) {
+      return reponse.code(404).send({ erreur: 'Clé d’accès introuvable.', code: 'introuvable' });
+    }
+    journaliser(ctx.base, {
+      utilisateur: identite.utilisateur.nom,
+      origine: 'interface',
+      action: 'suppression_cle_acces',
+      cible: id,
+      detail: `${retiree.libelle} — ${retiree.sessionsFermees} session(s) fermée(s)`,
+    });
+    return { supprime: true, sessionsFermees: retiree.sessionsFermees };
+  });
+
+  /**
+   * Ce qu'un administrateur peut faire des clés d'un autre compte : les voir, et les
+   * retirer. Jamais en poser une.
+   *
+   * Voir répond à la seule question qui motive l'ajout : quelqu'un a-t-il greffé une clé
+   * sur ce compte ? Retirer ferme la porte quand le titulaire est absent — un
+   * collaborateur parti, un téléphone perdu. Enregistrer pour autrui reviendrait à se
+   * donner l'accès d'un collègue, ce qu'aucun rôle ne justifie.
+   */
+  app.get('/api/utilisateurs/:id/cles', async (requete, reponse) => {
+    const identite = identifier(ctx.auth, requete);
+    if (!exiger(identite, reponse, { admin: true })) return;
+    const { id } = requete.params as { id: string };
+    return { cles: ctx.cles.lister(id) };
+  });
+
+  app.delete('/api/utilisateurs/:id/cles/:cleId', async (requete, reponse) => {
+    const identite = identifier(ctx.auth, requete);
+    if (!exiger(identite, reponse, { admin: true })) return;
+    const { id, cleId } = requete.params as { id: string; cleId: string };
+    // Même méthode et même clause que le retrait par le titulaire : le compte fait
+    // partie de la condition, seule son origine change.
+    const retiree = ctx.cles.supprimer(id, cleId);
+    if (!retiree) {
+      return reponse.code(404).send({ erreur: 'Clé d’accès introuvable.', code: 'introuvable' });
+    }
+    journaliser(ctx.base, {
+      utilisateur: identite.utilisateur.nom,
+      origine: 'interface',
+      action: 'suppression_cle_acces_par_administrateur',
+      cible: cleId,
+      detail: `${retiree.libelle} — compte ${id}`,
+    });
+    return { supprime: true };
+  });
+
+  app.post('/api/auth/cles/connexion/options', async (requete, reponse) => {
+    // Point d'entrée public : sans plafond, une boucle anonyme ferait grossir la table
+    // des défis jusqu'à remplir le disque.
+    if (!debitCles.autoriser(`defi:${requete.ip}`)) {
+      return reponse
+        .code(429)
+        .send({ erreur: 'Trop de demandes depuis cette adresse.', code: 'interdit' });
+    }
+    try {
+      return await ctx.cles.debuterConnexion();
+    } catch (erreur) {
+      return repondreErreurCle(erreur, reponse);
+    }
+  });
+
+  app.post('/api/auth/cles/connexion', async (requete, reponse) => {
+    const adresse = requete.ip;
+    if (parAdresse.bloque(adresse) || !debitCles.autoriser(`connexion:${adresse}`)) {
+      return reponse.code(429).send({
+        erreur: 'Trop de tentatives de connexion. Réessayer dans quelques minutes.',
+        code: 'interdit',
+      });
+    }
+    try {
+      const { demande, reponse: assertion } = zConnexionCle.parse(requete.body);
+      const reconnue = await ctx.cles.acheverConnexion({ demande, reponse: assertion });
+
+      const utilisateur = ctx.auth.lireUtilisateur(reconnue.utilisateurId);
+      if (!utilisateur) {
+        return reponse
+          .code(401)
+          .send({ erreur: 'Cette clé d’accès n’a pas été reconnue.', code: 'identifiant_refuse' });
+      }
+
+      parAdresse.succes(adresse);
+      poserCookieSession(reponse, ctx.auth.ouvrirSession(utilisateur.id));
+      journaliser(ctx.base, {
+        utilisateur: utilisateur.nom,
+        origine: 'interface',
+        action: 'connexion_par_cle',
+        cible: reconnue.cleId,
+        detail: reconnue.libelle,
+      });
+      return { utilisateur };
+    } catch (erreur) {
+      // Une clé refusée compte comme un échec de connexion : sans cela, ce point
+      // d'entrée serait le seul à ne pas être plafonné. Et elle laisse une trace : la
+      // connexion par mot de passe en laisse une, sans quoi aucune enquête n'est possible
+      // après coup.
+      if (erreur instanceof ErreurCle && erreur.statut === 401) {
+        parAdresse.echec(adresse);
+        journaliser(ctx.base, {
+          utilisateur: '',
+          origine: 'interface',
+          action: 'connexion_par_cle_refusee',
+          detail: adresse,
+        });
+      }
+      return repondreErreurCle(erreur, reponse);
     }
   });
 
@@ -649,7 +887,12 @@ export function enregistrerRoutes(app: FastifyInstance, ctx: Contexte): void {
           .run(entree.actif ? 1 : 0, id);
         if (!entree.actif) ctx.base.prepare('DELETE FROM sessions WHERE utilisateur_id = ?').run(id);
       }
-      if (entree.motDePasse !== undefined) await ctx.auth.changerMotDePasse(id, entree.motDePasse);
+      if (entree.motDePasse !== undefined) {
+        await ctx.auth.changerMotDePasse(id, entree.motDePasse);
+        // Même raison que pour un changement par le titulaire : un connecteur autorisé
+        // avec l'ancien mot de passe garderait trente jours d'accès aux dossiers.
+        ctx.oauth.revoquerPourUtilisateur(id);
+      }
 
       journaliser(ctx.base, {
         utilisateur: identite.utilisateur.nom,

@@ -55,7 +55,13 @@ export function ListeDossiers() {
             Administration
           </button>
         ) : null}
-        <span className="discret">{utilisateur?.nom}</span>
+        <button
+          className="bouton discret"
+          onClick={() => naviguer('/compte')}
+          title="Mot de passe et clés d’accès"
+        >
+          {utilisateur?.nom}
+        </button>
         <button className="bouton discret" onClick={basculerTheme} title="Changer de thème">
           {theme === 'clair' ? '◐' : '◑'}
         </button>

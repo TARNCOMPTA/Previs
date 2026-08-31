@@ -12,6 +12,7 @@ export * from './model/dossier.js';
 
 // ─── Contrat d'API partagé (serveur, interface, MCP) ──────────────────────────
 export * from './api/contract.js';
+export * from './api/cles.js';
 export * from './api/oauth.js';
 export * from './api/operations.js';
 export * from './api/depot.js';

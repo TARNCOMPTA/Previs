@@ -7,6 +7,7 @@ import Fastify from 'fastify';
 import { ServiceAuthentification } from './auth.js';
 import { journaliser, ouvrirBase, purgerSessions, type BaseDonnees } from './base.js';
 import { ServiceCabinet } from './cabinet.js';
+import { ServiceClesAcces } from './cles.js';
 import { chargerConfiguration, type Configuration } from './config.js';
 import { DepotSqlite } from './depot.js';
 import { monterMcpHttp } from './mcpHttp.js';
@@ -22,6 +23,7 @@ export interface Application {
   depot: DepotSqlite;
   cabinet: ServiceCabinet;
   oauth: ServiceOauth;
+  cles: ServiceClesAcces;
 }
 
 /** Construit l'application Fastify complète, sans l'écouter : utile aussi pour les essais. */
@@ -31,6 +33,9 @@ export async function construireApplication(config: Configuration): Promise<Appl
   const depot = new DepotSqlite(base);
   const cabinet = new ServiceCabinet(base);
   const oauth = new ServiceOauth(base);
+  // Le nom affiché par le système au moment du geste est celui du cabinet, tel qu'il est
+  // renseigné : il est relu à chaque cérémonie plutôt que figé au démarrage.
+  const cles = new ServiceClesAcces(base, config.urlPublique, () => cabinet.lire().nom);
 
   const app = Fastify({
     logger: { level: config.niveauJournal },
@@ -44,7 +49,7 @@ export async function construireApplication(config: Configuration): Promise<Appl
   // le double : la compression divise ces échanges par dix sur une liaison lente.
   await app.register(compression, { global: true, threshold: 1024, encodings: ['br', 'gzip', 'deflate'] });
   await app.register(cookie, { secret: config.secretSession });
-  enregistrerRoutes(app, { base, auth, depot, cabinet, oauth, config });
+  enregistrerRoutes(app, { base, auth, depot, cabinet, oauth, cles, config });
   await enregistrerRoutesOauth(app, { base, auth, oauth, cabinet, config });
 
   if (config.mcpHttpActif) {
@@ -84,7 +89,7 @@ export async function construireApplication(config: Configuration): Promise<Appl
     base.close();
   });
 
-  return { app, base, auth, depot, cabinet, oauth };
+  return { app, base, auth, depot, cabinet, oauth, cles };
 }
 
 /**

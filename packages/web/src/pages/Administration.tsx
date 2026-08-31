@@ -1,4 +1,4 @@
-import type { AutorisationOauth, JetonApi, Utilisateur } from '@previs/core';
+import type { AutorisationOauth, CleAcces, JetonApi, Utilisateur } from '@previs/core';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api/client.js';
@@ -14,6 +14,7 @@ export function Administration() {
   const [utilisateurs, setUtilisateurs] = useState<Utilisateur[] | null>(null);
   const [jetons, setJetons] = useState<JetonApi[] | null>(null);
   const [autorisations, setAutorisations] = useState<AutorisationOauth[] | null>(null);
+  const [clesDe, setClesDe] = useState<{ id: string; nom: string } | null>(null);
   const [erreur, setErreur] = useState<string | null>(null);
   const [creationCompte, setCreationCompte] = useState(false);
   const [creationJeton, setCreationJeton] = useState(false);
@@ -94,6 +95,7 @@ export function Administration() {
                     <th>Rôle</th>
                     <th>Dernière connexion</th>
                     <th>État</th>
+                    <th>Clés</th>
                     <th />
                   </tr>
                 </thead>
@@ -125,6 +127,15 @@ export function Administration() {
                           onClick={() => void api.modifierUtilisateur(u.id, { actif: !u.actif }).then(charger)}
                         >
                           {u.actif ? 'Actif' : 'Désactivé'}
+                        </button>
+                      </td>
+                      <td>
+                        <button
+                          className="bouton discret petit"
+                          onClick={() => setClesDe({ id: u.id, nom: u.nom })}
+                          title="Voir les clés d’accès de ce compte"
+                        >
+                          Voir
                         </button>
                       </td>
                       <td>
@@ -261,6 +272,7 @@ export function Administration() {
         </section>
       </div>
 
+      {clesDe ? <ModaleClesDuCompte compte={clesDe} onFermer={() => setClesDe(null)} /> : null}
       {creationCompte ? <ModaleCompte onFermer={() => setCreationCompte(false)} onCree={charger} /> : null}
       {creationJeton ? (
         <ModaleJeton
@@ -477,6 +489,102 @@ function ModaleJetonCree({ libelle, jeton, onFermer }: { libelle: string; jeton:
           </div>
         </div>
       </div>
+    </Modale>
+  );
+}
+
+/**
+ * Clés d'accès d'un autre compte : les voir, et les retirer.
+ *
+ * Voir répond à la seule question qui compte après coup : quelqu'un a-t-il greffé une
+ * clé sur ce compte ? Retirer ferme la porte quand le titulaire est absent — un
+ * collaborateur parti, un téléphone perdu. Aucune route ne permet d'en poser une pour
+ * autrui : ce serait se donner l'accès d'un collègue.
+ */
+function ModaleClesDuCompte({
+  compte,
+  onFermer,
+}: {
+  compte: { id: string; nom: string };
+  onFermer: () => void;
+}) {
+  const [cles, setCles] = useState<CleAcces[] | null>(null);
+  const [erreur, setErreur] = useState<string | null>(null);
+  const [aRetirer, setARetirer] = useState<CleAcces | null>(null);
+
+  const charger = async () => {
+    try {
+      setCles((await api.clesDuCompte(compte.id)).cles);
+    } catch (e) {
+      setErreur(e instanceof Error ? e.message : 'Chargement impossible.');
+    }
+  };
+
+  useEffect(() => {
+    void charger();
+  }, [compte.id]);
+
+  return (
+    <Modale
+      titre={`Clés d’accès — ${compte.nom}`}
+      onFermer={onFermer}
+      actions={
+        <button className="bouton" onClick={onFermer}>
+          Fermer
+        </button>
+      }
+    >
+      <div className="pile">
+        {erreur ? <Bandeau ton="erreur">{erreur}</Bandeau> : null}
+        {!cles ? (
+          <Chargement />
+        ) : cles.length === 0 ? (
+          <div className="zone-vide">Ce compte n’a enregistré aucune clé d’accès.</div>
+        ) : (
+          <table className="etat">
+            <thead>
+              <tr>
+                <th style={{ textAlign: 'left' }}>Clé</th>
+                <th>Enregistrée le</th>
+                <th>Dernière utilisation</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {cles.map((c) => (
+                <tr key={c.id}>
+                  <td style={{ textAlign: 'left' }}>{c.libelle}</td>
+                  <td>{new Date(c.creeLe).toLocaleDateString('fr-FR')}</td>
+                  <td className="discret">
+                    {c.derniereUtilisation
+                      ? new Date(c.derniereUtilisation).toLocaleString('fr-FR')
+                      : 'jamais'}
+                  </td>
+                  <td>
+                    <button className="bouton discret petit danger" onClick={() => setARetirer(c)}>
+                      ✕
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {aRetirer ? (
+        <Confirmation
+          titre="Retirer la clé d’accès"
+          message={`« ${aRetirer.libelle} » ne pourra plus ouvrir le compte de ${compte.nom}. Son mot de passe reste valable.`}
+          libelleAction="Retirer"
+          onAnnuler={() => setARetirer(null)}
+          onConfirmer={async () => {
+            await api.retirerCleDuCompte(compte.id, aRetirer.id);
+            setARetirer(null);
+            await charger();
+          }}
+        />
+      ) : null}
     </Modale>
   );
 }

@@ -16,7 +16,7 @@ import {
 } from './securite.js';
 
 export const NOM_COOKIE = 'previs_session';
-const DUREE_SESSION_JOURS = 30;
+export const DUREE_SESSION_JOURS = 30;
 
 interface LigneUtilisateur {
   id: string;
@@ -101,18 +101,28 @@ export class ServiceAuthentification {
     const valide = await verifierMotDePasse(motDePasse, empreinte);
     if (!ligne || !valide || ligne.actif !== 1) return null;
 
+    return { utilisateur: versUtilisateur(ligne), session: this.ouvrirSession(ligne.id) };
+  }
+
+  /**
+   * Ouvre une session pour un compte déjà authentifié, et rend son identifiant en clair.
+   *
+   * Un seul chemin, quel que soit le moyen employé — mot de passe ou clé d'accès. Un
+   * second chemin recopié à la main est l'endroit où l'on oublie que seule l'empreinte
+   * de l'identifiant doit être conservée.
+   */
+  ouvrirSession(utilisateurId: string): string {
     // Seule l'empreinte de l'identifiant de session est conservée : une copie de la
     // base — une sauvegarde égarée, par exemple — ne permet pas de rejouer une session.
     const session = nouvelIdentifiantSession();
     const expiration = new Date(Date.now() + DUREE_SESSION_JOURS * 86400000).toISOString();
     this.base
       .prepare('INSERT INTO sessions (id, utilisateur_id, cree_le, expire_le) VALUES (?, ?, ?, ?)')
-      .run(empreinteJeton(session), ligne.id, new Date().toISOString(), expiration);
+      .run(empreinteJeton(session), utilisateurId, new Date().toISOString(), expiration);
     this.base
       .prepare('UPDATE utilisateurs SET derniere_connexion = ? WHERE id = ?')
-      .run(new Date().toISOString(), ligne.id);
-
-    return { utilisateur: versUtilisateur(ligne), session };
+      .run(new Date().toISOString(), utilisateurId);
+    return session;
   }
 
   deconnecter(session: string): void {
@@ -232,10 +242,23 @@ export function identifier(
 export function exiger(
   identite: Identite | null,
   reponse: FastifyReply,
-  options: { ecriture?: boolean; admin?: boolean } = {},
+  options: { ecriture?: boolean; admin?: boolean; navigateur?: boolean } = {},
 ): identite is Identite {
   if (!identite) {
     reponse.code(401).send({ erreur: 'Authentification requise.', code: 'non_authentifie' });
+    return false;
+  }
+  // Actions qui touchent au moyen de se connecter : elles exigent une session ouverte
+  // dans l'interface, sans exiger le droit d'écrire. Un jeton d'API vit en clair dans un
+  // fichier de configuration ; lui laisser changer un mot de passe ou poser une clé
+  // d'accès en ferait une session d'interface durable. Et un compte en lecture seule
+  // doit pouvoir changer son propre mot de passe — ce que « ecriture » lui refusait.
+  if (options.navigateur && identite.origine !== 'interface') {
+    reponse.code(403).send({
+      erreur:
+        'Cette action se fait depuis une session ouverte dans l’interface, non par jeton d’API.',
+      code: 'interdit',
+    });
     return false;
   }
   if (options.admin) {

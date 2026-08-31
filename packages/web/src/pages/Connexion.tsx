@@ -1,14 +1,20 @@
 import { useState } from 'react';
+import { clesPossibles, messageErreurCle } from '../api/cles.js';
 import { useSession } from '../store/session.js';
 import { Bandeau } from '../ui/divers.js';
 
 /** Écran de connexion. Le message d'erreur ne révèle jamais si l'adresse existe. */
 export function Connexion() {
   const connecter = useSession((e) => e.connecter);
+  const connecterParCle = useSession((e) => e.connecterParCle);
   const [email, setEmail] = useState('');
   const [motDePasse, setMotDePasse] = useState('');
   const [erreur, setErreur] = useState<string | null>(null);
   const [envoi, setEnvoi] = useState(false);
+  const [envoiCle, setEnvoiCle] = useState(false);
+  // Le navigateur est seul juge : l'API doit exister et la page être servie en contexte
+  // sûr. Inutile d'offrir un bouton qui ne pourrait pas aboutir.
+  const avecCles = clesPossibles();
 
   const soumettre = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -69,6 +75,38 @@ export function Connexion() {
           <button className="bouton principal" type="submit" disabled={envoi} style={{ justifyContent: 'center' }}>
             {envoi ? 'Connexion…' : 'Se connecter'}
           </button>
+
+          {avecCles ? (
+            <>
+              <div className="rangee" style={{ gap: 10 }}>
+                <div style={{ flex: 1, height: 1, background: 'var(--trait)' }} />
+                <span className="discret" style={{ fontSize: 12 }}>
+                  ou
+                </span>
+                <div style={{ flex: 1, height: 1, background: 'var(--trait)' }} />
+              </div>
+              <button
+                className="bouton"
+                type="button"
+                disabled={envoiCle}
+                style={{ justifyContent: 'center' }}
+                onClick={async () => {
+                  setEnvoiCle(true);
+                  setErreur(null);
+                  try {
+                    // Ni adresse ni mot de passe : la clé est découvrable, c'est
+                    // l'authentificateur qui dit quel compte il ouvre.
+                    await connecterParCle();
+                  } catch (x) {
+                    setErreur(messageErreurCle(x));
+                    setEnvoiCle(false);
+                  }
+                }}
+              >
+                {envoiCle ? 'En attente de la clé…' : 'Se connecter avec une clé d’accès'}
+              </button>
+            </>
+          ) : null}
         </div>
       </form>
     </div>
