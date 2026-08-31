@@ -77,6 +77,20 @@ else
   obstacle() { mauvais "$@"; }
 fi
 
+# ─── Sauvegarde de la base ────────────────────────────────────────────────────
+# Passe par better-sqlite3, dont le service dépend déjà : c'est la même bibliothèque
+# que celle qui écrit la base, et l'API backup() produit un instantané cohérent,
+# journaux WAL compris, sans interrompre le service.
+sauvegarder_base() {
+  local base="$1" destination="$2" moteur="${3:-node}"
+  [[ -f "$base" ]] || return 1
+  "$moteur" -e "
+    const Base = require('better-sqlite3');
+    const base = new Base(process.argv[1], { readonly: true });
+    base.backup(process.argv[2]).then(() => base.close());
+  " "$base" "$destination"
+}
+
 # ─── Contrôles préalables ─────────────────────────────────────────────────────
 etape "Contrôles préalables"
 
@@ -399,6 +413,27 @@ if [[ -d .git ]]; then
     git checkout --quiet "$BRANCHE" 2>/dev/null || git checkout --quiet -B "$BRANCHE" "origin/$BRANCHE"
     git reset --hard --quiet "origin/$BRANCHE"
     ok "Branche $BRANCHE à jour ($(git rev-parse --short HEAD))"
+  fi
+fi
+
+# Une relance reconstruit le code et redémarre le service : au prochain démarrage, les
+# migrations s'appliquent à une base qui contient peut-être déjà des dossiers clients.
+# On en prend copie AVANT, jamais après.
+BASE_EXISTANTE="$RACINE/data/previs.db"
+if [[ -f "$BASE_EXISTANTE" ]]; then
+  install -d -m 0700 "$RACINE/sauvegardes"
+  AVANT_MAJ="$RACINE/sauvegardes/avant-mise-a-jour-$(date +%Y%m%d-%H%M%S).db"
+  if sauvegarder_base "$BASE_EXISTANTE" "$AVANT_MAJ" "$NODE" 2>/dev/null \
+     || sauvegarder_base "$BASE_EXISTANTE" "$AVANT_MAJ" node 2>/dev/null; then
+    gzip -f "$AVANT_MAJ"
+    chmod 0600 "$AVANT_MAJ.gz"
+    ok "Base sauvegardée avant mise à jour : $(basename "$AVANT_MAJ").gz ($(du -h "$AVANT_MAJ.gz" | cut -f1))"
+  else
+    # Refuser plutôt que reconstruire sur une base dont on n'a pas de copie.
+    mauvais "La base $BASE_EXISTANTE existe mais n'a pas pu être sauvegardée.
+  Reconstruire appliquerait des migrations à des dossiers clients sans filet.
+  Diagnostiquer, ou copier la base à la main, puis relancer :
+    sudo cp -a $RACINE/data $RACINE/data.copie-$(date +%Y%m%d)"
   fi
 fi
 
