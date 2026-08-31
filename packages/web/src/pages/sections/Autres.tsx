@@ -89,7 +89,7 @@ function CorpsAutres({ dossier, resultats, annees, modifier, modifierLigne, ajou
                 valeur={p.dateDebut}
                 onChange={(v) => definir((d) => void (d.parametres.dateDebut = v))}
               />
-              <ChampNombre
+              <ChampNombre differe
                 libelle="Nombre d’exercices"
                 valeur={p.nbExercices}
                 min={1}
@@ -97,7 +97,7 @@ function CorpsAutres({ dossier, resultats, annees, modifier, modifierLigne, ajou
                 onChange={(v) => definir((d) => void (d.parametres.nbExercices = v))}
                 aide="Jusqu’à dix pour un plan de continuation."
               />
-              <ChampNombre
+              <ChampNombre differe
                 libelle="Durée du premier exercice (mois)"
                 valeur={p.dureePremierExerciceMois}
                 min={1}
@@ -139,7 +139,7 @@ function CorpsAutres({ dossier, resultats, annees, modifier, modifierLigne, ajou
                 onChange={(v) => definir((d) => void (d.parametres.tva.tauxParDefaut = v))}
                 desactive={!p.tva.assujetti}
               />
-              <ChampNombre
+              <ChampNombre differe
                 libelle="Décalage de décaissement (mois)"
                 valeur={p.tva.decalageDecaissementMois}
                 min={0}
@@ -186,7 +186,7 @@ function CorpsAutres({ dossier, resultats, annees, modifier, modifierLigne, ajou
                   valeur={p.is.tauxNormal}
                   onChange={(v) => definir((d) => void (d.parametres.is.tauxNormal = v))}
                 />
-                <ChampNombre
+                <ChampNombre differe
                   libelle="Paiement du solde (mois après clôture)"
                   valeur={p.is.decalagePaiementMois}
                   min={0}
@@ -234,7 +234,7 @@ function CorpsAutres({ dossier, resultats, annees, modifier, modifierLigne, ajou
                 valeur={p.social.tauxChargesSalariales}
                 onChange={(v) => definir((d) => void (d.parametres.social.tauxChargesSalariales = v))}
               />
-              <ChampNombre
+              <ChampNombre differe
                 libelle="Décalage de règlement (mois)"
                 valeur={p.social.decalageMois}
                 min={0}
@@ -268,7 +268,7 @@ function CorpsAutres({ dossier, resultats, annees, modifier, modifierLigne, ajou
             aide="Ces délais pilotent à la fois le bilan et la trésorerie mensuelle."
           >
             <div className="grille-champs">
-              <ChampNombre
+              <ChampNombre differe
                 libelle="Délai de règlement clients (jours)"
                 valeur={p.bfr.delaiClientsJours}
                 min={0}
@@ -280,14 +280,14 @@ function CorpsAutres({ dossier, resultats, annees, modifier, modifierLigne, ajou
                 valeur={p.bfr.partComptantPourcent}
                 onChange={(v) => definir((d) => void (d.parametres.bfr.partComptantPourcent = v))}
               />
-              <ChampNombre
+              <ChampNombre differe
                 libelle="Délai fournisseurs (jours)"
                 valeur={p.bfr.delaiFournisseursJours}
                 min={0}
                 max={365}
                 onChange={(v) => definir((d) => void (d.parametres.bfr.delaiFournisseursJours = v))}
               />
-              <ChampNombre
+              <ChampNombre differe
                 libelle="Rotation du stock (jours)"
                 valeur={p.bfr.rotationStockJours}
                 min={0}
@@ -350,12 +350,12 @@ function CorpsAutres({ dossier, resultats, annees, modifier, modifierLigne, ajou
               />
             </div>
             <div className="grille-champs">
-              <ChampTexte
+              <ChampTexte differe
                 libelle="Raison sociale"
                 valeur={identite.raisonSociale}
                 onChange={(v) => definir((d) => void (d.identite.raisonSociale = v))}
               />
-              <ChampTexte
+              <ChampTexte differe
                 libelle="Forme juridique"
                 valeur={identite.formeJuridique}
                 onChange={(v) => definir((d) => void (d.identite.formeJuridique = v))}
@@ -380,42 +380,42 @@ function CorpsAutres({ dossier, resultats, annees, modifier, modifierLigne, ajou
                   libelle,
                 }))}
               />
-              <ChampTexte
+              <ChampTexte differe
                 libelle="Activité"
                 valeur={identite.activite}
                 onChange={(v) => definir((d) => void (d.identite.activite = v))}
               />
-              <ChampTexte
+              <ChampTexte differe
                 libelle="Code NAF"
                 valeur={identite.codeNaf}
                 onChange={(v) => definir((d) => void (d.identite.codeNaf = v))}
               />
-              <ChampTexte
+              <ChampTexte differe
                 libelle="SIRET"
                 valeur={identite.siret}
                 onChange={(v) => definir((d) => void (d.identite.siret = v))}
               />
-              <ChampTexte
+              <ChampTexte differe
                 libelle="Adresse"
                 valeur={identite.adresse.voie}
                 onChange={(v) => definir((d) => void (d.identite.adresse.voie = v))}
               />
-              <ChampTexte
+              <ChampTexte differe
                 libelle="Code postal"
                 valeur={identite.adresse.codePostal}
                 onChange={(v) => definir((d) => void (d.identite.adresse.codePostal = v))}
               />
-              <ChampTexte
+              <ChampTexte differe
                 libelle="Ville"
                 valeur={identite.adresse.ville}
                 onChange={(v) => definir((d) => void (d.identite.adresse.ville = v))}
               />
-              <ChampTexte
+              <ChampTexte differe
                 libelle="Adresse électronique"
                 valeur={identite.email}
                 onChange={(v) => definir((d) => void (d.identite.email = v))}
               />
-              <ChampTexte
+              <ChampTexte differe
                 libelle="Téléphone"
                 valeur={identite.telephone}
                 onChange={(v) => definir((d) => void (d.identite.telephone = v))}
@@ -432,7 +432,7 @@ function CorpsAutres({ dossier, resultats, annees, modifier, modifierLigne, ajou
                   largeur: 240,
                   alignementGauche: true,
                   rendu: (x) => (
-                    <ChampTexte
+                    <ChampTexte differe
                       valeur={x.nom}
                       onChange={(v) =>
                         definir((d) => {
@@ -449,7 +449,7 @@ function CorpsAutres({ dossier, resultats, annees, modifier, modifierLigne, ajou
                   largeur: 200,
                   alignementGauche: true,
                   rendu: (x) => (
-                    <ChampTexte
+                    <ChampTexte differe
                       valeur={x.fonction}
                       onChange={(v) =>
                         definir((d) => {
@@ -509,7 +509,7 @@ function CorpsAutres({ dossier, resultats, annees, modifier, modifierLigne, ajou
             titre="Introduction du rapport"
             aide="Quatre à six paragraphes, repris tels quels dans le PDF. Séparer les paragraphes par une ligne vide."
           >
-            <ChampZoneTexte
+            <ChampZoneTexte differe
               valeur={identite.introduction}
               onChange={(v) => definir((d) => void (d.identite.introduction = v))}
               lignes={12}
@@ -521,7 +521,7 @@ function CorpsAutres({ dossier, resultats, annees, modifier, modifierLigne, ajou
           {identite.typeDossier === 'plan_continuation' ? (
             <>
               <BlocGrille titre="Rappel de la procédure">
-                <ChampZoneTexte
+                <ChampZoneTexte differe
                   valeur={identite.rappelProcedure}
                   onChange={(v) => definir((d) => void (d.identite.rappelProcedure = v))}
                   lignes={8}
@@ -538,7 +538,7 @@ function CorpsAutres({ dossier, resultats, annees, modifier, modifierLigne, ajou
                       largeur: 220,
                       alignementGauche: true,
                       rendu: (x) => (
-                        <ChampTexte
+                        <ChampTexte differe
                           valeur={x.creancier}
                           onChange={(v) => modifierLigne('autres.passifDeclare', x.id, { creancier: v })}
                         />
@@ -626,7 +626,7 @@ function CorpsAutres({ dossier, resultats, annees, modifier, modifierLigne, ajou
                   largeur: 220,
                   alignementGauche: true,
                   rendu: (x) => (
-                    <ChampTexte
+                    <ChampTexte differe
                       valeur={x.libelle}
                       onChange={(v) => modifierLigne('autres.exceptionnels', x.id, { libelle: v })}
                     />
@@ -720,7 +720,7 @@ function CorpsAutres({ dossier, resultats, annees, modifier, modifierLigne, ajou
                   largeur: 220,
                   alignementGauche: true,
                   rendu: (x) => (
-                    <ChampTexte
+                    <ChampTexte differe
                       valeur={x.libelle}
                       onChange={(v) => modifierLigne('autres.distributions', x.id, { libelle: v })}
                     />
@@ -824,7 +824,7 @@ function CorpsAutres({ dossier, resultats, annees, modifier, modifierLigne, ajou
           </BlocGrille>
 
           <BlocGrille titre="Notes du dossier">
-            <ChampZoneTexte
+            <ChampZoneTexte differe
               valeur={dossier.autres.notes}
               onChange={(v) => definir((d) => void (d.autres.notes = v))}
               lignes={6}

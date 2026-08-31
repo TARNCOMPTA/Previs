@@ -96,7 +96,7 @@ function CorpsInvestissements({ dossier, resultats, annees, modifierLigne, ajout
             onChange={(v) => majuscule(l.id, { valeurResiduelle: v })}
             aide="Part non amortissable, un terrain par exemple."
           />
-          <ChampNombre
+          <ChampNombre differe
             libelle="Échelonnement du règlement (mois)"
             valeur={l.echelonnementMois}
             min={1}
@@ -112,13 +112,13 @@ function CorpsInvestissements({ dossier, resultats, annees, modifierLigne, ajout
               ...emprunts.map((e) => ({ valeur: e.id, libelle: e.libelle })),
             ]}
           />
-          <ChampTexte
+          <ChampTexte differe
             libelle="Compte du plan comptable"
             valeur={l.compte ?? ''}
             onChange={(v) => majuscule(l.id, { compte: v || undefined })}
             placeholder="2183"
           />
-          <ChampTexte
+          <ChampTexte differe
             libelle="Note"
             valeur={l.note ?? ''}
             onChange={(v) => majuscule(l.id, { note: v || undefined })}
@@ -140,7 +140,7 @@ function CorpsInvestissements({ dossier, resultats, annees, modifierLigne, ajout
       entete: 'Désignation',
       largeur: 210,
       alignementGauche: true,
-      rendu: (l) => <ChampTexte valeur={l.libelle} onChange={(v) => majuscule(l.id, { libelle: v })} />,
+      rendu: (l) => <ChampTexte differe valeur={l.libelle} onChange={(v) => majuscule(l.id, { libelle: v })} />,
     },
     {
       cle: 'categorie',
@@ -180,7 +180,7 @@ function CorpsInvestissements({ dossier, resultats, annees, modifierLigne, ajout
       largeur: 68,
       aide: '1 correspond au premier mois de l’exercice.',
       rendu: (l) => (
-        <ChampNombre valeur={l.mois} min={1} max={24} onChange={(v) => majuscule(l.id, { mois: v })} />
+        <ChampNombre differe valeur={l.mois} min={1} max={24} onChange={(v) => majuscule(l.id, { mois: v })} />
       ),
     },
     {
@@ -205,7 +205,7 @@ function CorpsInvestissements({ dossier, resultats, annees, modifierLigne, ajout
         l.modeAmortissement === 'aucun' ? (
           <span className="discret">—</span>
         ) : (
-          <ChampNombre
+          <ChampNombre differe
             valeur={l.dureeAmortissementAnnees}
             min={0}
             max={50}
@@ -238,7 +238,7 @@ function CorpsInvestissements({ dossier, resultats, annees, modifierLigne, ajout
       largeur: 210,
       alignementGauche: true,
       rendu: (c) => (
-        <ChampTexte
+        <ChampTexte differe
           valeur={c.libelle}
           onChange={(v) => modifierLigne('investissements.cessions', c.id, { libelle: v })}
         />
@@ -279,7 +279,7 @@ function CorpsInvestissements({ dossier, resultats, annees, modifierLigne, ajout
       entete: 'Mois',
       largeur: 68,
       rendu: (c) => (
-        <ChampNombre
+        <ChampNombre differe
           valeur={c.mois}
           min={1}
           max={24}

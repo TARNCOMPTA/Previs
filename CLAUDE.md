@@ -227,10 +227,23 @@ Deux écueils propres à la **vue scindée** (`web/src/layout/`), qui ne se devi
 1. **Une frontière `Suspense` par volet.** Les écrans sont chargés à la demande ; sans
    frontière propre, le premier affichage de l'un remplace toute la fenêtre par
    « Chargement… ». La coquille en pose une par volet.
-2. **`ChampMontant` ne remonte sa saisie qu'au `blur`.** Tout ce qui démonte un volet —
-   bascule du bouton, franchissement du seuil de 1 180 px — doit donc valider la frappe en
-   cours d'abord, sans quoi le montant revient à sa valeur précédente sous les yeux de
-   l'utilisateur.
+2. **Les champs de saisie ne remontent qu'au `blur`.** C'est le cas de `ChampMontant`
+   depuis toujours, et de `ChampTexte`, `ChampNombre` et `ChampZoneTexte` **quand ils
+   portent `differe`** — ce que fait tout champ câblé au dossier, dans les cinq écrans de
+   `pages/sections/`. Sans cela, un libellé de vingt caractères déclenchait vingt recalculs
+   complets du prévisionnel, alors qu'aucun nombre ne bouge, et empilait vingt entrées
+   d'annulation : trois libellés vidaient la pile de cinquante niveaux. Mesuré : un
+   caractère passe de 7 ms à 0,20 ms, et une seule annulation restitue le libellé entier.
+
+   `differe` est en **option et non par défaut**, et la raison ne se devine pas : un
+   formulaire local dont le bouton porte `disabled={!nom.trim()}` se verrouillerait. Le
+   bouton reste désactivé tant que la frappe n'est pas remontée, un bouton désactivé ne
+   reçoit pas de `mousedown`, donc pas de `blur` — et le champ ne remonte jamais. C'est
+   exactement la modale « Nouveau dossier ».
+
+   Corollaire : tout ce qui démonte un volet — bascule du bouton, franchissement du seuil de
+   1 180 px — doit valider la frappe en cours d'abord, sans quoi la saisie revient à sa
+   valeur précédente sous les yeux de l'utilisateur.
 
 Et un défaut préexistant, qu'il vaut mieux connaître : `overflow-x: auto` fait de
 `.defilement-horizontal` un conteneur de défilement sur **les deux** axes, de hauteur libre.

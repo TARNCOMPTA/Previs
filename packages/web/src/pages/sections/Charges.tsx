@@ -69,7 +69,7 @@ function CorpsCharges({ dossier, resultats, annees, modifierLigne, ajouterLigne,
             onChange={(v) => majPersonnel(p.id, { exerciceEmbauche: Number(v) })}
             options={annees.map((x, i) => ({ valeur: String(i), libelle: x }))}
           />
-          <ChampNombre
+          <ChampNombre differe
             libelle="Mois d’entrée"
             valeur={p.moisEmbauche}
             min={1}
@@ -77,7 +77,7 @@ function CorpsCharges({ dossier, resultats, annees, modifierLigne, ajouterLigne,
             onChange={(v) => majPersonnel(p.id, { moisEmbauche: v })}
           />
           {annees.map((annee, i) => (
-            <ChampNombre
+            <ChampNombre differe
               key={`mois${i}`}
               libelle={`Mois rémunérés ${annee}`}
               valeur={p.nbMoisParExercice[i] ?? 12}
@@ -142,7 +142,7 @@ function CorpsCharges({ dossier, resultats, annees, modifierLigne, ajouterLigne,
               valeur={l.tvaDeductible}
               onChange={(v) => majCharge(l.id, { tvaDeductible: v })}
             />
-            <ChampNombre
+            <ChampNombre differe
               libelle="Délai de règlement (jours)"
               valeur={l.delaiPaiementJours ?? dossier.parametres.bfr.delaiFournisseursJours}
               min={0}
@@ -150,13 +150,13 @@ function CorpsCharges({ dossier, resultats, annees, modifierLigne, ajouterLigne,
               onChange={(v) => majCharge(l.id, { delaiPaiementJours: v })}
               aide="Laisser au délai général si le poste suit la règle commune."
             />
-            <ChampTexte
+            <ChampTexte differe
               libelle="Compte du plan comptable"
               valeur={l.compte ?? ''}
               onChange={(v) => majCharge(l.id, { compte: v || undefined })}
               placeholder="613"
             />
-            <ChampTexte
+            <ChampTexte differe
               libelle="Note"
               valeur={l.note ?? ''}
               onChange={(v) => majCharge(l.id, { note: v || undefined })}
@@ -183,7 +183,7 @@ function CorpsCharges({ dossier, resultats, annees, modifierLigne, ajouterLigne,
       entete: 'Poste de charge',
       largeur: 180,
       alignementGauche: true,
-      rendu: (l) => <ChampTexte valeur={l.libelle} onChange={(v) => majCharge(l.id, { libelle: v })} />,
+      rendu: (l) => <ChampTexte differe valeur={l.libelle} onChange={(v) => majCharge(l.id, { libelle: v })} />,
     },
     {
       cle: 'categorie',
@@ -270,7 +270,7 @@ function CorpsCharges({ dossier, resultats, annees, modifierLigne, ajouterLigne,
       entete: 'Poste',
       largeur: 210,
       alignementGauche: true,
-      rendu: (p) => <ChampTexte valeur={p.libelle} onChange={(v) => majPersonnel(p.id, { libelle: v })} />,
+      rendu: (p) => <ChampTexte differe valeur={p.libelle} onChange={(v) => majPersonnel(p.id, { libelle: v })} />,
     },
     {
       cle: 'statut',
@@ -287,7 +287,7 @@ function CorpsCharges({ dossier, resultats, annees, modifierLigne, ajouterLigne,
         entete: `Effectif ${annee}`,
         largeur: 92,
         rendu: (p: LignePersonnel) => (
-          <ChampNombre
+          <ChampNombre differe
             valeur={p.effectifs[i] ?? 0}
             min={0}
             pas={0.5}

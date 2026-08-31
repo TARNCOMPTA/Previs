@@ -122,7 +122,16 @@ export function ChampNombre({
   libelle,
   aide,
   desactive,
-}: ProprietesBase & { valeur: number; onChange: (v: number) => void; min?: number; max?: number; pas?: number }) {
+  differe,
+}: ProprietesBase & {
+  valeur: number;
+  onChange: (v: number) => void;
+  min?: number;
+  max?: number;
+  pas?: number;
+  /** Remonte au `blur` plutôt qu'à chaque caractère. Voir `ChampTexte`. */
+  differe?: boolean;
+}) {
   const [saisie, setSaisie] = useState<string | null>(null);
   const affichee = saisie ?? String(Number.isFinite(valeur) ? valeur : 0);
 
@@ -148,14 +157,40 @@ export function ChampNombre({
         disabled={desactive}
         onChange={(e) => {
           setSaisie(e.target.value);
-          remonter(e.target.value);
+          if (!differe) remonter(e.target.value);
         }}
-        onBlur={() => setSaisie(null)}
+        onBlur={() => {
+          if (differe && saisie !== null) remonter(saisie);
+          setSaisie(null);
+        }}
+        onKeyDown={(e) => {
+          if (!differe) return;
+          if (e.key === 'Enter') e.currentTarget.blur();
+          else if (e.key === 'Escape') {
+            setSaisie(null);
+            e.currentTarget.blur();
+          }
+        }}
       />
     </Enveloppe>
   );
 }
 
+/**
+ * Saisie de texte.
+ *
+ * `differe` fait remonter la frappe au `blur` et sur Entrée, comme `ChampMontant`, au lieu
+ * de la remonter caractère par caractère. C'est ce qu'il faut pour tout champ câblé au
+ * dossier : un libellé de vingt caractères déclenchait vingt recalculs complets du
+ * prévisionnel — alors qu'aucun nombre ne bouge — et empilait vingt entrées d'annulation,
+ * vidant la pile de cinquante niveaux au bout de trois libellés.
+ *
+ * Il est en OPTION et non par défaut, et la raison mérite d'être écrite : un formulaire
+ * local dont le bouton porte `disabled={!nom.trim()}` se verrouillerait. Le bouton reste
+ * désactivé tant que la frappe n'est pas remontée, un bouton désactivé ne reçoit pas de
+ * `mousedown`, donc pas de `blur` — et le champ ne remonte jamais. C'est le cas de la
+ * modale « Nouveau dossier ».
+ */
 export function ChampTexte({
   valeur,
   onChange,
@@ -165,26 +200,54 @@ export function ChampTexte({
   desactive,
   invalide,
   longueurMax,
+  differe,
 }: ProprietesBase & {
   valeur: string;
   onChange: (v: string) => void;
   placeholder?: string;
   longueurMax?: number;
+  differe?: boolean;
 }) {
+  const [saisie, setSaisie] = useState<string | null>(null);
+  const affichee = differe ? (saisie ?? valeur) : valeur;
+
   return (
     <Enveloppe libelle={libelle} aide={aide}>
       <input
         className={`champ${invalide ? ' invalide' : ''}`}
-        value={valeur}
+        value={affichee}
         placeholder={placeholder}
         maxLength={longueurMax}
         disabled={desactive}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={(e) => {
+          if (differe) setSaisie(e.target.value);
+          else onChange(e.target.value);
+        }}
+        onBlur={() => {
+          if (!differe) return;
+          if (saisie !== null && saisie !== valeur) onChange(saisie);
+          setSaisie(null);
+        }}
+        onKeyDown={(e) => {
+          if (!differe) return;
+          if (e.key === 'Enter') e.currentTarget.blur();
+          else if (e.key === 'Escape') {
+            setSaisie(null);
+            e.currentTarget.blur();
+          }
+        }}
       />
     </Enveloppe>
   );
 }
 
+/**
+ * Saisie d'un paragraphe. `differe` a le même sens que dans `ChampTexte`.
+ *
+ * Le cas y est plus marqué encore : l'introduction du rapport va jusqu'à vingt mille
+ * caractères, et chacun déclenchait un recalcul complet du prévisionnel et une entrée
+ * d'annulation.
+ */
 export function ChampZoneTexte({
   valeur,
   onChange,
@@ -193,26 +256,39 @@ export function ChampZoneTexte({
   lignes = 8,
   placeholder,
   compteur,
+  differe,
 }: ProprietesBase & {
   valeur: string;
   onChange: (v: string) => void;
   lignes?: number;
   placeholder?: string;
   compteur?: boolean;
+  differe?: boolean;
 }) {
+  const [saisie, setSaisie] = useState<string | null>(null);
+  const affichee = differe ? (saisie ?? valeur) : valeur;
+
   return (
     <Enveloppe libelle={libelle} aide={aide}>
       <textarea
         className="champ"
         rows={lignes}
-        value={valeur}
+        value={affichee}
         placeholder={placeholder}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={(e) => {
+          if (differe) setSaisie(e.target.value);
+          else onChange(e.target.value);
+        }}
+        onBlur={() => {
+          if (!differe) return;
+          if (saisie !== null && saisie !== valeur) onChange(saisie);
+          setSaisie(null);
+        }}
       />
       {compteur ? (
         <div className="aide-champ">
-          {valeur.trim() ? `${valeur.trim().split(/\n\s*\n/).length} paragraphe(s), ` : ''}
-          {valeur.length} caractères
+          {affichee.trim() ? `${affichee.trim().split(/\n\s*\n/).length} paragraphe(s), ` : ''}
+          {affichee.length} caractères
         </div>
       ) : null}
     </Enveloppe>

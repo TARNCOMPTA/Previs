@@ -58,7 +58,7 @@ function CorpsFinancements({ dossier, resultats, annees, modifierLigne, ajouterL
       entete: 'Libellé',
       largeur: 200,
       alignementGauche: true,
-      rendu: (a) => <ChampTexte valeur={a.libelle} onChange={(v) => majApport(a.id, { libelle: v })} />,
+      rendu: (a) => <ChampTexte differe valeur={a.libelle} onChange={(v) => majApport(a.id, { libelle: v })} />,
     },
     {
       cle: 'type',
@@ -74,7 +74,7 @@ function CorpsFinancements({ dossier, resultats, annees, modifierLigne, ajouterL
       entete: 'Apporteur',
       largeur: 150,
       alignementGauche: true,
-      rendu: (a) => <ChampTexte valeur={a.apporteur} onChange={(v) => majApport(a.id, { apporteur: v })} />,
+      rendu: (a) => <ChampTexte differe valeur={a.apporteur} onChange={(v) => majApport(a.id, { apporteur: v })} />,
     },
     {
       cle: 'montant',
@@ -99,7 +99,7 @@ function CorpsFinancements({ dossier, resultats, annees, modifierLigne, ajouterL
       cle: 'mois',
       entete: 'Mois',
       largeur: 68,
-      rendu: (a) => <ChampNombre valeur={a.mois} min={1} max={24} onChange={(v) => majApport(a.id, { mois: v })} />,
+      rendu: (a) => <ChampNombre differe valeur={a.mois} min={1} max={24} onChange={(v) => majApport(a.id, { mois: v })} />,
     },
   ], [annees, majApport]);
 
@@ -109,14 +109,14 @@ function CorpsFinancements({ dossier, resultats, annees, modifierLigne, ajouterL
       entete: 'Emprunt',
       largeur: 180,
       alignementGauche: true,
-      rendu: (e) => <ChampTexte valeur={e.libelle} onChange={(v) => majEmprunt(e.id, { libelle: v })} />,
+      rendu: (e) => <ChampTexte differe valeur={e.libelle} onChange={(v) => majEmprunt(e.id, { libelle: v })} />,
     },
     {
       cle: 'organisme',
       entete: 'Organisme',
       largeur: 150,
       alignementGauche: true,
-      rendu: (e) => <ChampTexte valeur={e.organisme} onChange={(v) => majEmprunt(e.id, { organisme: v })} />,
+      rendu: (e) => <ChampTexte differe valeur={e.organisme} onChange={(v) => majEmprunt(e.id, { organisme: v })} />,
     },
     {
       cle: 'montant',
@@ -136,7 +136,7 @@ function CorpsFinancements({ dossier, resultats, annees, modifierLigne, ajouterL
       entete: 'Durée (mois)',
       largeur: 96,
       rendu: (e) => (
-        <ChampNombre valeur={e.dureeMois} min={1} max={360} onChange={(v) => majEmprunt(e.id, { dureeMois: v })} />
+        <ChampNombre differe valeur={e.dureeMois} min={1} max={360} onChange={(v) => majEmprunt(e.id, { dureeMois: v })} />
       ),
     },
     {
@@ -145,7 +145,7 @@ function CorpsFinancements({ dossier, resultats, annees, modifierLigne, ajouterL
       largeur: 78,
       aide: 'Nombre de mois de franchise.',
       rendu: (e) => (
-        <ChampNombre valeur={e.differeMois} min={0} max={60} onChange={(v) => majEmprunt(e.id, { differeMois: v, typeDiffere: v > 0 && e.typeDiffere === 'aucun' ? 'partiel' : e.typeDiffere })} />
+        <ChampNombre differe valeur={e.differeMois} min={0} max={60} onChange={(v) => majEmprunt(e.id, { differeMois: v, typeDiffere: v > 0 && e.typeDiffere === 'aucun' ? 'partiel' : e.typeDiffere })} />
       ),
     },
     {
@@ -191,14 +191,14 @@ function CorpsFinancements({ dossier, resultats, annees, modifierLigne, ajouterL
       entete: 'Subvention',
       largeur: 200,
       alignementGauche: true,
-      rendu: (s) => <ChampTexte valeur={s.libelle} onChange={(v) => majSubvention(s.id, { libelle: v })} />,
+      rendu: (s) => <ChampTexte differe valeur={s.libelle} onChange={(v) => majSubvention(s.id, { libelle: v })} />,
     },
     {
       cle: 'organisme',
       entete: 'Organisme',
       largeur: 160,
       alignementGauche: true,
-      rendu: (s) => <ChampTexte valeur={s.organisme} onChange={(v) => majSubvention(s.id, { organisme: v })} />,
+      rendu: (s) => <ChampTexte differe valeur={s.organisme} onChange={(v) => majSubvention(s.id, { organisme: v })} />,
     },
     {
       cle: 'type',
@@ -241,7 +241,7 @@ function CorpsFinancements({ dossier, resultats, annees, modifierLigne, ajouterL
       largeur: 104,
       aide: 'Étalement de la subvention d’investissement au compte de résultat. 0 = en une fois.',
       rendu: (s) => (
-        <ChampNombre
+        <ChampNombre differe
           valeur={s.repriseSurAnnees}
           min={0}
           max={20}
@@ -258,7 +258,7 @@ function CorpsFinancements({ dossier, resultats, annees, modifierLigne, ajouterL
       entete: 'Contrat',
       largeur: 200,
       alignementGauche: true,
-      rendu: (c) => <ChampTexte valeur={c.libelle} onChange={(v) => majCreditBail(c.id, { libelle: v })} />,
+      rendu: (c) => <ChampTexte differe valeur={c.libelle} onChange={(v) => majCreditBail(c.id, { libelle: v })} />,
     },
     {
       cle: 'valeur',
@@ -280,7 +280,7 @@ function CorpsFinancements({ dossier, resultats, annees, modifierLigne, ajouterL
       entete: 'Durée (mois)',
       largeur: 100,
       rendu: (c) => (
-        <ChampNombre valeur={c.dureeMois} min={1} max={240} onChange={(v) => majCreditBail(c.id, { dureeMois: v })} />
+        <ChampNombre differe valeur={c.dureeMois} min={1} max={240} onChange={(v) => majCreditBail(c.id, { dureeMois: v })} />
       ),
     },
     {
@@ -366,7 +366,7 @@ function CorpsFinancements({ dossier, resultats, annees, modifierLigne, ajouterL
                     }}
                   />
                 ))}
-                <ChampTexte
+                <ChampTexte differe
                   libelle="Note"
                   valeur={a.note ?? ''}
                   onChange={(v) => majApport(a.id, { note: v || undefined })}
@@ -430,7 +430,7 @@ function CorpsFinancements({ dossier, resultats, annees, modifierLigne, ajouterL
                 onChange={(v) => majEmprunt(e.id, { exerciceDeblocage: Number(v) })}
                 options={annees.map((x, i) => ({ valeur: String(i), libelle: x }))}
               />
-              <ChampNombre
+              <ChampNombre differe
                 libelle="Mois de déblocage"
                 valeur={e.moisDeblocage}
                 min={1}
@@ -533,7 +533,7 @@ function CorpsFinancements({ dossier, resultats, annees, modifierLigne, ajouterL
           libelleTotal="Total des loyers mensuels"
           detail={(c) => (
             <div className="grille-champs">
-              <ChampTexte
+              <ChampTexte differe
                 libelle="Organisme"
                 valeur={c.organisme}
                 onChange={(v) => majCreditBail(c.id, { organisme: v })}
@@ -544,7 +544,7 @@ function CorpsFinancements({ dossier, resultats, annees, modifierLigne, ajouterL
                 onChange={(v) => majCreditBail(c.id, { exerciceDebut: Number(v) })}
                 options={annees.map((x, i) => ({ valeur: String(i), libelle: x }))}
               />
-              <ChampNombre
+              <ChampNombre differe
                 libelle="Mois de début"
                 valeur={c.moisDebut}
                 min={1}

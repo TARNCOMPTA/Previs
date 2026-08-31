@@ -45,7 +45,7 @@ function CorpsRecettes({ dossier, resultats, annees, modifierLigne, ajouterLigne
         <div className="pile">
           <div className="grille-champs">
             <ChampTaux libelle="Taux de TVA" valeur={l.tauxTva} onChange={(v) => maj(l.id, { tauxTva: v })} />
-            <ChampNombre
+            <ChampNombre differe
               libelle="Délai d’encaissement (jours)"
               valeur={l.delaiEncaissementJours ?? dossier.parametres.bfr.delaiClientsJours}
               min={0}
@@ -59,14 +59,14 @@ function CorpsRecettes({ dossier, resultats, annees, modifierLigne, ajouterLigne
               aide="Génère automatiquement un achat consommé variable, pour le négoce ou la restauration."
             />
             {l.mode === 'volume_prix' || l.mode === 'capacite' ? (
-              <ChampTexte
+              <ChampTexte differe
                 libelle="Unité"
                 valeur={l.unite}
                 onChange={(v) => maj(l.id, { unite: v })}
                 placeholder="couverts, séances, heures…"
               />
             ) : null}
-            <ChampTexte
+            <ChampTexte differe
               libelle="Note"
               valeur={l.note ?? ''}
               onChange={(v) => maj(l.id, { note: v || undefined })}
@@ -163,7 +163,7 @@ function CorpsRecettes({ dossier, resultats, annees, modifierLigne, ajouterLigne
       entete: 'Activité',
       largeur: 200,
       alignementGauche: true,
-      rendu: (l) => <ChampTexte valeur={l.libelle} onChange={(v) => maj(l.id, { libelle: v })} />,
+      rendu: (l) => <ChampTexte differe valeur={l.libelle} onChange={(v) => maj(l.id, { libelle: v })} />,
     },
     {
       cle: 'nature',
