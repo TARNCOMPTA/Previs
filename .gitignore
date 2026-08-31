@@ -11,6 +11,9 @@ data/*.db-journal
 data/*.db-wal
 data/*.db-shm
 data/uploads/
+sauvegardes/
+premier-acces.txt
+chromium/
 coverage/
 .vite/
 .tsbuildinfo

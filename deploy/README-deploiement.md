@@ -1,9 +1,77 @@
 # Installer Previs sur un VPS
 
-Procédure complète, du premier accès SSH à un service en production sous HTTPS.
-Comptez une demi-heure. Les commandes supposent Debian 12 ou Ubuntu 24.04.
+Debian 12 ou Ubuntu 24.04, sur un serveur neuf.
 
-Dans tout ce document, remplacez `previs.tarncompta.fr` par votre nom de domaine.
+## En une commande
+
+**Avant de commencer :** l'enregistrement DNS `A` de `previs.tarncompta.fr` doit
+déjà pointer vers l'adresse IP du VPS. Let's Encrypt vérifie le domaine, et le
+script s'arrête net si la résolution ne mène pas à ce serveur.
+
+```bash
+sudo apt update && sudo apt install -y git
+sudo git clone https://github.com/TARNCOMPTA/Previs.git /opt/previs
+cd /opt/previs
+sudo ./deploy/installer.sh \
+  --domaine previs.tarncompta.fr \
+  --courriel contact@tarncompta.fr
+```
+
+Le script installe Node, nginx, Chromium et certbot, construit les quatre paquets,
+génère la configuration et son secret de session, met le service sous systemd,
+obtient le certificat, ferme le pare-feu, installe la sauvegarde quotidienne, puis
+**éprouve l'installation** : santé du service, chargement de l'interface, en-têtes
+de sécurité, démarrage de Chromium sous le compte de service, et production d'un
+vrai PDF de bout en bout. Il affiche à la fin le mot de passe du premier compte
+administrateur.
+
+Comptez cinq à dix minutes, l'essentiel étant la construction.
+
+### Options
+
+| Option | Effet |
+|---|---|
+| `--domaine` | Nom de domaine servi. Par défaut `previs.tarncompta.fr`. |
+| `--courriel` | Adresse de notification Let's Encrypt. Obligatoire sauf `--sans-tls`. |
+| `--branche` | Branche à déployer. Par défaut `main`. |
+| `--racine` | Répertoire d'installation. Par défaut `/opt/previs`. |
+| `--sans-tls` | Reste en HTTP, sans certificat. Pour un essai en réseau local. |
+| `--sans-pare-feu` | Ne touche pas à ufw, si le pare-feu est géré ailleurs. |
+
+### Mettre à jour
+
+La même commande. Le script est idempotent : il récupère la branche, reconstruit,
+redémarre le service, et **ne régénère jamais un secret déjà présent** dans `.env`.
+
+```bash
+cd /opt/previs && sudo ./deploy/installer.sh \
+  --domaine previs.tarncompta.fr --courriel contact@tarncompta.fr
+```
+
+### Après l'installation
+
+1. Ouvrir `https://previs.tarncompta.fr`, se connecter avec le mot de passe affiché.
+2. Le changer immédiatement, puis `sudo rm /opt/previs/premier-acces.txt`.
+3. Renseigner **Administration → Identité du cabinet** : logo, SIRET, inscription
+   à l'Ordre, coordonnées. C'est ce qui s'imprimera sur les dossiers remis.
+4. Créer un jeton d'API dans **Administration**, pour brancher l'assistant.
+
+### Si quelque chose cloche
+
+```bash
+sudo systemctl status previs          # état du service
+sudo journalctl -u previs -n 100      # ses cent dernières lignes
+sudo nginx -t                         # validité de la configuration nginx
+curl -s https://previs.tarncompta.fr/api/sante
+sudo /etc/cron.daily/previs-sauvegarde  # essayer la sauvegarde à la main
+```
+
+---
+
+## Procédure détaillée, étape par étape
+
+Ce qui suit décrit à la main ce que le script fait tout seul. À lire pour
+comprendre l'installation, la reprendre partiellement, ou l'adapter.
 
 ---
 
