@@ -106,8 +106,11 @@ DEPOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ok "Dépôt : $DEPOT"
 
 if [[ "$DEPOT" != "$RACINE" ]]; then
-  avert "Le dépôt n'est pas dans $RACINE. L'unité systemd et le service utiliseront $DEPOT."
-  RACINE="$DEPOT"
+  # Réorienter RACINE en silence rendait --racine inopérant, et pouvait faire repartir
+  # le service sur un autre répertoire de données que celui attendu. On refuse.
+  mauvais "Le dépôt est dans $DEPOT, alors que l'installation viserait $RACINE.
+  Le service, sa base et ses sauvegardes doivent vivre là où est le dépôt.
+  Soit lancer le script depuis $RACINE, soit viser le dépôt : --racine $DEPOT"
 fi
 
 # La résolution DNS conditionne l'émission du certificat : autant s'en assurer avant.
@@ -554,6 +557,21 @@ else
     sed -i "s/^PORT=.*/PORT=$PORT_INTERNE/" "$RACINE/.env"
     avert "Port modifié dans .env : $PORT_EXISTANT → $PORT_INTERNE"
   fi
+
+  # Une première installation en --sans-tls laisse PUBLIC_URL en http et
+  # SECURE_COOKIES à false. Sans réconciliation, ces valeurs survivaient au passage
+  # en TLS : le contrôle d'origine refusait alors les écritures venues de https, et
+  # le cookie de session partait sans l'attribut Secure.
+  if [[ $SANS_TLS -eq 0 ]]; then
+    if grep -q "^PUBLIC_URL=http://$DOMAINE\$" "$RACINE/.env"; then
+      sed -i "s#^PUBLIC_URL=.*#PUBLIC_URL=https://$DOMAINE#" "$RACINE/.env"
+      avert "PUBLIC_URL passé en https : le contrôle d'origine refusait sinon les écritures."
+    fi
+    if grep -q '^SECURE_COOKIES=false$' "$RACINE/.env"; then
+      sed -i 's/^SECURE_COOKIES=.*/SECURE_COOKIES=true/' "$RACINE/.env"
+      avert "SECURE_COOKIES remis à true : le cookie de session partait sans attribut Secure."
+    fi
+  fi
   ok ".env conservé (secrets inchangés), chemin de Chromium rafraîchi"
 fi
 
@@ -656,21 +674,50 @@ if [[ $SANS_TLS -eq 0 ]]; then
   if [[ -f "/etc/letsencrypt/live/$DOMAINE/fullchain.pem" ]]; then
     ok "Certificat déjà présent, renouvellement automatique assuré par certbot"
   else
+    # --deploy-hook : sans lui, certbot renouvelle le certificat dans deux mois mais
+    # personne ne recharge nginx, qui continue de présenter l'ancien jusqu'à expiration.
     certbot certonly --webroot -w /var/www/certbot -d "$DOMAINE" \
       --email "$COURRIEL" --agree-tos --no-eff-email --non-interactive \
+      --deploy-hook 'systemctl reload nginx' \
       || mauvais "L'émission du certificat a échoué. Vérifier que le port 80 est joignable depuis Internet."
-    ok "Certificat émis pour $DOMAINE"
+    ok "Certificat émis pour $DOMAINE, rechargement de nginx au renouvellement"
+  fi
+
+  # Un certificat déjà présent peut avoir été émis sans crochet : on le pose pour tous.
+  install -d -m 0755 /etc/letsencrypt/renewal-hooks/deploy
+  if [[ ! -f /etc/letsencrypt/renewal-hooks/deploy/recharger-nginx ]]; then
+    printf '#!/bin/sh\n# Posé par Previs — deploy/installer.sh\nsystemctl reload nginx 2>/dev/null || true\n' \
+      > /etc/letsencrypt/renewal-hooks/deploy/recharger-nginx
+    chmod 0755 /etc/letsencrypt/renewal-hooks/deploy/recharger-nginx
+    ok "Crochet de rechargement posé pour les renouvellements"
   fi
 
   # Seconde phase : l'hôte virtuel complet du dépôt, avec TLS et les réglages
   # propres à l'export PDF et au point d'entrée MCP.
+  #
+  # Le fichier de phase 1 est mis de côté : s'il est déjà activé et que la nouvelle
+  # version ne passe pas nginx -t, l'abandonner en place laisserait un hôte virtuel
+  # invalide que le prochain rechargement — le nôtre ou celui d'un autre — refuserait.
+  PHASE_UNE="$(mktemp)"
+  cp -a "$VHOST" "$PHASE_UNE"
   { printf '%s\n' "$MARQUE"
     sed -e "s/previs\.tarncompta\.fr/$DOMAINE/g" \
         -e "s/127\.0\.0\.1:8080/127.0.0.1:$PORT_INTERNE/g" \
         "$RACINE/deploy/nginx.previs.conf"
   } > "$VHOST"
-  nginx -t >/dev/null 2>&1 || mauvais "Configuration nginx invalide après passage en HTTPS : nginx -t"
-  systemctl reload nginx
+
+  if ! nginx -t >/dev/null 2>&1; then
+    cp -a "$PHASE_UNE" "$VHOST"
+    rm -f "$PHASE_UNE"
+    mauvais "La configuration nginx en HTTPS est invalide. L'hôte virtuel a été RESTAURÉ
+  dans sa version HTTP, vos sites tournent toujours.
+  Voir le détail :  sudo nginx -t"
+  fi
+  rm -f "$PHASE_UNE"
+
+  systemctl reload nginx \
+    || mauvais "nginx a refusé de recharger sa configuration alors qu'elle est valide.
+  Vos sites tournent toujours sur l'ancienne. Voir : sudo journalctl -xeu nginx.service"
   ok "HTTPS actif, redirection du port 80 en place"
 
   systemctl enable --quiet certbot.timer 2>/dev/null || true
