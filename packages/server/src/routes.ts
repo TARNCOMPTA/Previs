@@ -693,7 +693,7 @@ export function enregistrerRoutes(app: FastifyInstance, ctx: Contexte): void {
       if (!enregistre) {
         return reponse.code(404).send({ erreur: 'Dossier introuvable.', code: 'introuvable' });
       }
-      const pdf = await ctx.depot.pdf(id);
+      const pdf = await ctx.depot.pdf(id, auteurDe(identite));
       // Le nom vient du dossier : tout ce qui n'est pas alphanumérique est remplacé,
       // pour qu'aucun guillemet ni saut de ligne ne s'échappe de l'en-tête HTTP.
       const nomFichier = `${(enregistre.client || enregistre.nom)
@@ -702,12 +702,7 @@ export function enregistrerRoutes(app: FastifyInstance, ctx: Contexte): void {
         .replace(/[^A-Za-z0-9-]+/g, '-')
         .replace(/^-+|-+$/g, '')
         .slice(0, 80) || 'Dossier'}-${enregistre.anneeDebut.replace(/[^0-9]/g, '')}-Previsionnel.pdf`;
-      journaliser(ctx.base, {
-        utilisateur: identite.utilisateur.nom,
-        origine: identite.origine,
-        action: 'export_pdf',
-        cible: id,
-      });
+      // La trace est posée par le dépôt, pour que tous les canaux la laissent.
       return reponse
         .header('content-type', 'application/pdf')
         .header('content-disposition', `attachment; filename="${nomFichier}"`)

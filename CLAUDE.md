@@ -177,7 +177,7 @@ premier démarrage, tout le reste vient de l'écran Administration.
 
 ```bash
 npm run typecheck      # les quatre paquets
-npm test               # 81 essais du moteur, 255 du serveur, 11 du magasin de l'interface
+npm test               # 81 essais du moteur, 256 du serveur, 11 du magasin de l'interface
 npm run build
 ```
 

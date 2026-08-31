@@ -1,10 +1,26 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { creerServeurMcp } from '@previs/mcp';
 import { ouvrirBase } from '../src/base.js';
 import { DepotSqlite } from '../src/depot.js';
 import { ENTETE_JETON, type Auteur } from '@previs/core';
+
+/**
+ * Chromium est remplacé, et lui seul : le vrai `depot.pdf()` tourne, avec sa journalisation
+ * et son plafond. Substituer la méthode du dépôt aurait éprouvé la substitution.
+ */
+let rendus = 0;
+vi.mock('../src/pdf/index.js', async () => {
+  const reel = await vi.importActual<typeof import('../src/pdf/index.js')>('../src/pdf/index.js');
+  return {
+    ...reel,
+    genererPdf: async () => {
+      rendus += 1;
+      return new Uint8Array([37]);
+    },
+  };
+});
 import { construireApplication } from '../src/index.js';
 import type { Configuration } from '../src/config.js';
 
@@ -205,14 +221,8 @@ describe('l’export PDF de l’assistant est plafonné', () => {
   } as Configuration;
 
   async function monter() {
+    rendus = 0;
     const e = await construireApplication(config);
-    let rendus = 0;
-    // La substitution porte sur l'instance : `bornerExportPdf` la prend pour prototype et
-    // appelle bien celle-ci, comme le fait la route HTTP.
-    (e.depot as unknown as { pdf: () => Promise<Uint8Array> }).pdf = async () => {
-      rendus += 1;
-      return new Uint8Array([37]);
-    };
 
     const utilisateur = await e.auth.creerUtilisateur({
       email: 'assistant@tarncompta.fr',
@@ -261,6 +271,13 @@ describe('l’export PDF de l’assistant est plafonné', () => {
         },
       });
 
+    const traceExports = () =>
+      (
+        e.base
+          .prepare("SELECT COUNT(*) AS n FROM journal_audit WHERE action = 'export_pdf'")
+          .get() as { n: number }
+      ).n;
+
     const parRouteHttp = () =>
       e.app.inject({
         method: 'POST',
@@ -272,6 +289,7 @@ describe('l’export PDF de l’assistant est plafonné', () => {
       e,
       parMcp,
       parRouteHttp,
+      traceExports,
       rendus: () => rendus,
       fermer: async () => {
         await e.app.close();
@@ -293,12 +311,30 @@ describe('l’export PDF de l’assistant est plafonné', () => {
     };
   }
 
+  /*
+   * Un export sort un dossier client complet du logiciel. La route HTTP journalisait le
+   * sien ; l'outil MCP empruntait le même dépôt sans rien journaliser, si bien qu'un export
+   * demandé par l'assistant ne laissait aucune ligne derrière lui.
+   */
+  it('un export demandé par l’assistant laisse une trace', async () => {
+    const s = await monter();
+    try {
+      expect(s.traceExports()).toBe(0);
+      await s.parMcp();
+      expect(s.traceExports()).toBe(1);
+      await s.parRouteHttp();
+      expect(s.traceExports()).toBe(2);
+    } finally {
+      await s.fermer();
+    }
+  });
+
   it('le trente-et-unième appel est refusé, sans avoir lancé Chromium', async () => {
     const s = await monter();
     try {
       for (let i = 0; i < PLAFOND; i++) {
         const r = resultatMcp((await s.parMcp()).body);
-        expect(r.isError, `appel ${i + 1}`).toBe(false);
+        expect(r.isError, `appel ${i + 1} : ${r.text.slice(0, 200)}`).toBe(false);
       }
       expect(s.rendus()).toBe(PLAFOND);
 

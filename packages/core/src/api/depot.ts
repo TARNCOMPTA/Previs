@@ -49,7 +49,14 @@ export interface DepotDossiers {
   lireVersion(id: string, version: number): Promise<DossierEnregistre | null>;
   restaurer(id: string, version: number, auteur: Auteur): Promise<DossierEnregistre>;
   calculer(id: string): Promise<Resultats>;
-  pdf(id: string): Promise<Uint8Array>;
+  /**
+   * Produit le dossier au format PDF.
+   *
+   * L'auteur est exigé pour que l'export laisse une trace, quel que soit le canal : la
+   * route HTTP journalisait le sien, l'outil MCP ne journalisait rien — un dossier client
+   * complet pouvait donc sortir du logiciel sans qu'aucune ligne ne le dise.
+   */
+  pdf(id: string, auteur: Auteur): Promise<Uint8Array>;
 }
 
 /** Erreur métier portant un code du contrat, convertie en réponse HTTP par le serveur. */

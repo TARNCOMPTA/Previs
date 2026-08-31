@@ -24,7 +24,7 @@ export function bornerExportPdf(
 ): DepotDossiers {
   return Object.create(depot, {
     pdf: {
-      value: async (id: string): Promise<Uint8Array> => {
+      value: async (id: string, auteur: Parameters<DepotDossiers['pdf']>[1]): Promise<Uint8Array> => {
         if (!autoriser()) {
           throw new ErreurDepot(
             'interdit',
@@ -32,7 +32,7 @@ export function bornerExportPdf(
               'dossier reste exportable depuis l’interface, bouton « Exporter le dossier ».',
           );
         }
-        return depot.pdf(id);
+        return depot.pdf(id, auteur);
       },
     },
   }) as DepotDossiers;

@@ -358,9 +358,18 @@ export class DepotSqlite implements DepotDossiers {
     return calculer(enregistre.dossier);
   }
 
-  async pdf(id: string): Promise<Uint8Array> {
+  async pdf(id: string, auteur: Auteur): Promise<Uint8Array> {
     const enregistre = await this.lire(id);
     if (!enregistre) throw new ErreurDepot('introuvable', 'Dossier introuvable.');
+    // La trace est posée ici, et non dans la route : un dossier client complet sort du
+    // logiciel, et l'outil MCP empruntait ce chemin sans rien journaliser.
+    journaliser(this.base, {
+      utilisateur: auteur.nom,
+      origine: auteur.origine,
+      action: 'export_pdf',
+      cible: id,
+      detail: enregistre.client || enregistre.nom,
+    });
     const resultats = calculer(enregistre.dossier);
     return genererPdf(enregistre.dossier, resultats, {
       titre: enregistre.nom,

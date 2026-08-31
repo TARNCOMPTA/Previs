@@ -105,6 +105,8 @@ export function creerDepotHttp(urlBase: string, jeton: string): DepotDossiers {
 
     calculer: (id) => appeler<Resultats>(`/api/dossiers/${id}/calculer`, { methode: 'POST' }),
 
+    // L'auteur n'est pas transmis : le serveur le tient de l'identité de la requête, et
+    // c'est lui qui journalise.
     pdf: (id) => appeler<Uint8Array>(`/api/dossiers/${id}/pdf`, { methode: 'POST', brut: true }),
   };
 

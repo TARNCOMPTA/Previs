@@ -632,7 +632,7 @@ export function enregistrerOutils(serveur: McpServer, depot: DepotDossiers, aute
               '\n\nCorriger ces écarts, ou rappeler generer_pdf avec ignorerControles à vrai.',
           );
         }
-        const pdf = await depot.pdf(dossierId);
+        const pdf = await depot.pdf(dossierId, auteur);
         return texte(
           `Dossier PDF produit : ${Math.round(pdf.byteLength / 1024)} Ko.`,
           'Le document est téléchargeable depuis l’interface, bouton « Exporter le dossier ».',

@@ -543,6 +543,8 @@ describe('le jeton d’API par « Authorization: Bearer »', () => {
 });
 
 describe('l’export PDF est plafonné sur les deux canaux', () => {
+  const AUTEUR_ESSAI = { id: 'utl_1', nom: 'Aymeric HANGARD', origine: 'mcp' } as const;
+
   /** Un dépôt factice : seule `pdf` compte ici, et elle ne lance pas Chromium. */
   function depotFactice() {
     const appels: string[] = [];
@@ -564,13 +566,13 @@ describe('l’export PDF est plafonné sur les deux canaux', () => {
     const brut = depotFactice();
     const borne = bornerExportPdf(brut as never, () => debit.autoriser('utl_1'));
 
-    await borne.pdf('dos_1');
-    await borne.pdf('dos_1');
-    await borne.pdf('dos_1');
+    await borne.pdf('dos_1', AUTEUR_ESSAI);
+    await borne.pdf('dos_1', AUTEUR_ESSAI);
+    await borne.pdf('dos_1', AUTEUR_ESSAI);
     expect(brut.appels).toHaveLength(3);
 
     // Le quatrième dépasse le plafond : refusé avant d'atteindre Chromium.
-    await expect(borne.pdf('dos_1')).rejects.toThrow(/Trop d’exports PDF/);
+    await expect(borne.pdf('dos_1', AUTEUR_ESSAI)).rejects.toThrow(/Trop d’exports PDF/);
     expect(brut.appels).toHaveLength(3);
 
     // Et le compteur est bien celui de la route : elle n'a plus rien à donner non plus.
@@ -579,7 +581,7 @@ describe('l’export PDF est plafonné sur les deux canaux', () => {
 
   it('le refus porte le code « interdit », pas une erreur interne', async () => {
     const borne = bornerExportPdf(depotFactice() as never, () => false);
-    await expect(borne.pdf('dos_1')).rejects.toMatchObject({
+    await expect(borne.pdf('dos_1', AUTEUR_ESSAI)).rejects.toMatchObject({
       name: 'ErreurDepot',
       code: 'interdit',
     });
@@ -590,9 +592,9 @@ describe('l’export PDF est plafonné sur les deux canaux', () => {
     const premier = bornerExportPdf(depotFactice() as never, () => debit.autoriser('utl_1'));
     const second = bornerExportPdf(depotFactice() as never, () => debit.autoriser('utl_2'));
 
-    await premier.pdf('dos_1');
-    await expect(premier.pdf('dos_1')).rejects.toThrow();
-    await expect(second.pdf('dos_1')).resolves.toBeInstanceOf(Uint8Array);
+    await premier.pdf('dos_1', AUTEUR_ESSAI);
+    await expect(premier.pdf('dos_1', AUTEUR_ESSAI)).rejects.toThrow();
+    await expect(second.pdf('dos_1', AUTEUR_ESSAI)).resolves.toBeInstanceOf(Uint8Array);
   });
 
   it('tout le reste du dépôt passe sans être recopié', async () => {
