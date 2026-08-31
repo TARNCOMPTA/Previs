@@ -151,20 +151,33 @@ export class LimiteurDebit {
 const CLES_MAX = 10000;
 
 /**
- * Retire les fenêtres expirées.
+ * Retire les fenêtres expirées, et n'évince jamais un compteur élevé.
  *
- * Sans cela, un attaquant faisant défiler des adresses électroniques inventées ferait
- * croître la table indéfiniment : la limitation deviendrait elle-même le déni de service.
- * Au-delà du plafond, la table est vidée — perdre un compteur en cours coûte moins
- * qu'une fuite de mémoire, et l'essai en série reste arrêté par la clé d'adresse.
+ * Sans purge, un attaquant faisant défiler des adresses inventées ferait croître la table
+ * indéfiniment : la limitation deviendrait elle-même le déni de service.
+ *
+ * Mais vider la table au-delà du plafond, ce que faisait la version précédente, rendait à
+ * l'attaquant exactement ce qu'il cherchait : dix mille adresses inventées suffisaient à
+ * remettre à zéro le compteur du compte visé. Le commentaire d'alors s'en consolait en
+ * disant que « l'essai en série reste arrêté par la clé d'adresse » — c'était faux, les
+ * compteurs d'adresse vivent dans la même table et étaient vidés avec le reste.
+ *
+ * L'éviction porte donc sur les compteurs les PLUS BAS. Un compteur élevé a coûté des
+ * tentatives réelles à celui qui l'a fait monter : c'est précisément celui qu'il ne faut pas
+ * lui rendre. Et il n'y a pas de moyen économique de fabriquer dix mille compteurs élevés.
  */
-function purger(table: Map<string, { jusqua: number }>, maintenant: number): void {
-  if (table.size < CLES_MAX) {
-    if (table.size < 64) return;
-    for (const [cle, entree] of table) {
-      if (maintenant > entree.jusqua) table.delete(cle);
-    }
-    return;
+function purger(table: Map<string, { compte: number; jusqua: number }>, maintenant: number): void {
+  if (table.size < 64) return;
+  for (const [cle, entree] of table) {
+    if (maintenant > entree.jusqua) table.delete(cle);
   }
-  table.clear();
+  if (table.size < CLES_MAX) return;
+
+  // Toujours au-dessus du plafond : on ramène la table à la moitié en évinçant les
+  // compteurs les plus bas, jamais la table entière.
+  const parCompteCroissant = [...table.entries()].sort((a, b) => a[1].compte - b[1].compte);
+  const aRetirer = table.size - Math.floor(CLES_MAX / 2);
+  for (let i = 0; i < aRetirer && i < parCompteCroissant.length; i++) {
+    table.delete(parCompteCroissant[i][0]);
+  }
 }

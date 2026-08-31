@@ -60,7 +60,9 @@ export interface MetadonneesAutorisation {
  * détournement du code d'autorisation, et sont comparées ensuite caractère par caractère.
  */
 export const zEnregistrementClient = z.object({
-  redirect_uris: z.array(z.string().url()).min(1).max(10),
+  // Bornée en longueur : dix adresses sans plafond laissaient une requête anonyme écrire
+  // près d'un mégaoctet dans une table que rien ne purgeait.
+  redirect_uris: z.array(z.string().url().max(400)).min(1).max(10),
   client_name: z.string().max(200).optional(),
   client_uri: z.string().url().max(500).optional(),
   logo_uri: z.string().url().max(500).optional(),

@@ -98,6 +98,21 @@ export class ServiceOauth {
     }
   }
 
+  /**
+   * Vrai si ce connecteur n'a jamais obtenu de jeton sur ce serveur.
+   *
+   * C'est le seul indice dont dispose l'écran de consentement pour distinguer un outil
+   * qu'on branche d'un appât enregistré à l'instant : l'enregistrement dynamique est ouvert
+   * — un connecteur MCP s'enregistre lui-même — et le nom affiché vient de celui qui demande.
+   * La colonne « derniere_utilisation » n'est renseignée qu'à l'émission d'un jeton.
+   */
+  jamaisAutorise(clientId: string): boolean {
+    const ligne = this.base
+      .prepare('SELECT derniere_utilisation FROM oauth_clients WHERE client_id = ?')
+      .get(clientId) as { derniere_utilisation: string | null } | undefined;
+    return !ligne || ligne.derniere_utilisation === null;
+  }
+
   lireClient(clientId: string): { clientId: string; nom: string; redirectUris: string[] } | null {
     const ligne = this.base
       .prepare('SELECT client_id, nom, redirect_uris FROM oauth_clients WHERE client_id = ?')

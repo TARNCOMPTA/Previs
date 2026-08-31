@@ -3,7 +3,7 @@ import { ENTETE_JETON } from '@previs/core';
 import type { FastifyInstance } from 'fastify';
 import { construireApplication, type Application } from '../src/index.js';
 import type { Configuration } from '../src/config.js';
-import { empreinteJeton } from '../src/securite.js';
+import { empreinteJeton, LimiteurConnexions } from '../src/securite.js';
 
 /**
  * Essais de sécurité de l'API.
@@ -231,6 +231,71 @@ describe('en-têtes de sécurité', () => {
     expect(String(reponse.headers['content-security-policy'])).toContain("frame-ancestors 'none'");
     expect(String(reponse.headers['content-security-policy'])).toContain("object-src 'none'");
   });
+
+  it('HSTS est posé quand l’adresse publique est en HTTPS', async () => {
+    /*
+     * Sans HSTS, la première visite tapée « previs.tarncompta.fr » part en clair : un
+     * intercepteur la garde en clair et lit la session. La redirection du frontal arrive
+     * trop tard, la requête est déjà passée.
+     */
+    const reponse = await app.inject({ method: 'GET', url: '/api/sante' });
+    expect(String(reponse.headers['strict-transport-security'])).toContain('max-age=31536000');
+    expect(String(reponse.headers['strict-transport-security'])).toContain('includeSubDomains');
+    // « preload » est un engagement du cabinet, pas du code.
+    expect(String(reponse.headers['strict-transport-security'])).not.toContain('preload');
+  });
+
+  it('HSTS n’est pas posé sur un montage local en clair', async () => {
+    const localE = await construireApplication({ ...config, urlPublique: 'http://127.0.0.1:8080' });
+    try {
+      const reponse = await localE.app.inject({ method: 'GET', url: '/api/sante' });
+      expect(reponse.headers['strict-transport-security']).toBeUndefined();
+    } finally {
+      await localE.app.close();
+      localE.base.close();
+    }
+  });
+});
+
+describe('énumération de comptes par le temps de réponse', () => {
+  /*
+   * La parade d'origine dérivait une empreinte de leurre à CHAQUE tentative sur un compte
+   * inconnu, puis la comparait : deux dérivations scrypt là où un compte connu n'en coûte
+   * qu'une. Mesuré avant correction, un compte inconnu répondait en 93,6 ms contre 47,6 —
+   * 96,6 % d'écart, un oracle qu'on lit à l'œil nu. Après, 0,2 %.
+   *
+   * Le seuil est large — quarante pour cent — parce qu'une mesure de temps sous charge est
+   * bruyante ; il attrape néanmoins un facteur deux, qui est ce qu'on veut interdire.
+   */
+  it('un compte inconnu ne répond pas plus lentement qu’un compte connu', async () => {
+    const mesurer = async (email: string) => {
+      // Un tour à blanc : la première dérivation paie l'initialisation.
+      await app.inject({
+        method: 'POST',
+        url: '/api/auth/connexion',
+        headers: { origin: ORIGINE },
+        payload: { email, motDePasse: 'mauvais-mot-de-passe-de-mesure' },
+      });
+      const temps: number[] = [];
+      for (let i = 0; i < 6; i++) {
+        const debut = performance.now();
+        await app.inject({
+          method: 'POST',
+          url: '/api/auth/connexion',
+          headers: { origin: ORIGINE, 'x-forwarded-for': `10.0.${i}.1` },
+          payload: { email, motDePasse: 'mauvais-mot-de-passe-de-mesure' },
+        });
+        temps.push(performance.now() - debut);
+      }
+      temps.sort((a, b) => a - b);
+      return temps[Math.floor(temps.length / 2)];
+    };
+
+    const connu = await mesurer('admin@tarncompta.fr');
+    const inconnu = await mesurer('personne-de-ce-nom@tarncompta.fr');
+    const ecart = Math.abs(inconnu - connu) / connu;
+    expect(ecart, `connu ${connu.toFixed(1)} ms, inconnu ${inconnu.toFixed(1)} ms`).toBeLessThan(0.4);
+  });
 });
 
 describe('limitation des tentatives', () => {
@@ -245,6 +310,41 @@ describe('limitation des tentatives', () => {
       dernier = reponse.statusCode;
     }
     expect(dernier).toBe(429);
+  });
+});
+
+describe('le compteur de tentatives ne se remet pas à zéro à la demande', () => {
+  /*
+   * La purge d'origine vidait la table entière au-delà de dix mille clés. Dix mille adresses
+   * inventées suffisaient donc à effacer le compteur du compte visé — et celui de l'adresse
+   * de l'attaquant avec, puisqu'ils vivent dans la même table. Le commentaire de l'époque
+   * s'en consolait en affirmant le contraire.
+   *
+   * L'éviction porte maintenant sur les compteurs les plus bas : ceux qui n'ont rien coûté.
+   */
+  it('un compteur élevé survit à dix mille clés inventées', () => {
+    const limiteur = new LimiteurConnexions(10, 15 * 60 * 1000);
+    const vise = 'compte:victime@tarncompta.fr';
+
+    // La victime est à un essai du blocage.
+    for (let i = 0; i < 9; i++) limiteur.echec(vise);
+    expect(limiteur.bloque(vise)).toBe(false);
+
+    // L'attaquant fait défiler des adresses inventées pour faire déborder la table.
+    for (let i = 0; i < 12000; i++) limiteur.echec(`compte:inconnu-${i}@example.invalid`);
+
+    // Le compteur de la victime doit avoir survécu : un essai de plus la bloque.
+    limiteur.echec(vise);
+    expect(limiteur.bloque(vise)).toBe(true);
+  });
+
+  it('la table reste bornée malgré le défilé d’adresses', () => {
+    const limiteur = new LimiteurConnexions(10, 15 * 60 * 1000);
+    for (let i = 0; i < 30000; i++) limiteur.echec(`compte:inconnu-${i}@example.invalid`);
+    // On ne peut pas lire la taille depuis l'extérieur : on vérifie que la dernière clé
+    // écrite est bien retenue, donc que la purge n'a pas tout jeté non plus.
+    limiteur.echec('compte:inconnu-29999@example.invalid');
+    expect(limiteur.bloque('compte:inconnu-29999@example.invalid')).toBe(false);
   });
 });
 

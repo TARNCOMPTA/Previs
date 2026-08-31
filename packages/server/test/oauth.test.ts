@@ -462,6 +462,77 @@ describe('identité du cabinet sur l’écran de consentement', () => {
   });
 });
 
+describe('l’écran de consentement dit où part l’autorisation', () => {
+  /*
+   * L'enchaînement que ces essais interdisent, vérifié une fois contre le serveur avant
+   * correction : l'enregistrement dynamique étant ouvert par nécessité — un connecteur MCP
+   * s'enregistre lui-même, sans authentification — un inconnu enregistrait un client en
+   * choisissant son NOM et son ADRESSE DE RETOUR, puis envoyait au comptable un lien vers
+   * l'écran de consentement. Celui-ci s'affichait sur le domaine du cabinet, avec le logo du
+   * cabinet, réclamait l'adresse et le mot de passe, présentait le nom choisi par l'inconnu —
+   * « Previs — vérification de sécurité obligatoire » — et ne nommait nulle part la
+   * destination. Le code d'autorisation partait chez l'inconnu, qui l'échangeait contre un
+   * jeton de lecture et d'écriture sur tous les dossiers.
+   */
+  it('l’origine de l’adresse de retour est nommée dans la page', async () => {
+    const { defi } = pkce();
+    const r = await app.inject({
+      method: 'GET',
+      url: '/oauth/autoriser',
+      query: {
+        response_type: 'code',
+        client_id: clientId,
+        redirect_uri: REDIRECTION,
+        code_challenge: defi,
+        code_challenge_method: 'S256',
+      },
+    });
+    expect(r.statusCode).toBe(200);
+    expect(r.body).toContain('L’autorisation sera envoyée à');
+    expect(r.body).toContain(new URL(REDIRECTION).origin);
+  });
+
+  it('un connecteur jamais autorisé porte un avertissement', async () => {
+    const enr = await app.inject({
+      method: 'POST',
+      url: '/oauth/enregistrer',
+      payload: {
+        client_name: 'Previs — vérification de sécurité obligatoire',
+        redirect_uris: ['https://attaquant.example/collecte'],
+      },
+    });
+    expect(enr.statusCode).toBe(201);
+    const inconnu = enr.json().client_id as string;
+
+    const { defi } = pkce();
+    const r = await app.inject({
+      method: 'GET',
+      url: '/oauth/autoriser',
+      query: {
+        response_type: 'code',
+        client_id: inconnu,
+        redirect_uri: 'https://attaquant.example/collecte',
+        code_challenge: defi,
+        code_challenge_method: 'S256',
+      },
+    });
+    expect(r.statusCode).toBe(200);
+    // La destination est nommée, et le nom choisi par l'inconnu est présenté comme tel.
+    expect(r.body).toContain('https://attaquant.example');
+    expect(r.body).toContain('jamais été autorisé');
+    expect(r.body).toContain('choisi par celui qui demande l’accès');
+  });
+
+  it('une adresse de retour démesurée est refusée à l’enregistrement', async () => {
+    const r = await app.inject({
+      method: 'POST',
+      url: '/oauth/enregistrer',
+      payload: { redirect_uris: [`https://attaquant.example/${'a'.repeat(500)}`] },
+    });
+    expect(r.statusCode).toBe(400);
+  });
+});
+
 describe('politique de contenu de l’écran de consentement', () => {
   it('la soumission du formulaire vers l’adresse de retour du client est autorisée', async () => {
     // WebKit applique `form-action` à la redirection qui suit la soumission : avec

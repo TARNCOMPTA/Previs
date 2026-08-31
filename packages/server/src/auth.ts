@@ -89,15 +89,35 @@ export class ServiceAuthentification {
     return (this.base.prepare('SELECT COUNT(*) AS n FROM utilisateurs').get() as { n: number }).n;
   }
 
+  /**
+   * L'empreinte de comparaison employée quand le compte n'existe pas.
+   *
+   * Elle est dérivée une seule fois et mémorisée. La version précédente appelait
+   * « hacherMotDePasse() » à chaque tentative sur un compte inconnu, puis
+   * « verifierMotDePasse() » : DEUX dérivations scrypt là où un compte connu n'en coûte
+   * qu'une. La parade contre l'énumération créait donc l'oracle qu'elle prétendait fermer —
+   * un compte inconnu répondait deux fois plus lentement — et doublait le coût processeur
+   * d'un balayage d'adresses, ce qui servait l'attaquant deux fois.
+   */
+  private static leurre: Promise<string> | null = null;
+
+  private static empreinteDeComparaison(): Promise<string> {
+    ServiceAuthentification.leurre ??= hacherMotDePasse(
+      'empreinte-de-comparaison-sans-compte-correspondant',
+    );
+    return ServiceAuthentification.leurre;
+  }
+
   /** Vérifie les identifiants et ouvre une session. Renvoie null si l'authentification échoue. */
   async connecter(email: string, motDePasse: string): Promise<{ utilisateur: Utilisateur; session: string } | null> {
     const ligne = this.base
       .prepare('SELECT * FROM utilisateurs WHERE email = ?')
       .get(email.toLowerCase().trim()) as LigneUtilisateur | undefined;
 
-    // Un mot de passe est tout de même vérifié sur un compte inconnu, pour que la
-    // durée de la réponse ne révèle pas l'existence de l'adresse.
-    const empreinte = ligne?.empreinte ?? (await hacherMotDePasse('empreinte-de-comparaison'));
+    // Un mot de passe est tout de même vérifié sur un compte inconnu, pour que la durée de
+    // la réponse ne révèle pas l'existence de l'adresse : une seule dérivation dans les deux
+    // cas, l'empreinte de leurre étant calculée une fois pour toutes.
+    const empreinte = ligne?.empreinte ?? (await ServiceAuthentification.empreinteDeComparaison());
     const valide = await verifierMotDePasse(motDePasse, empreinte);
     if (!ligne || !valide || ligne.actif !== 1) return null;
 
@@ -151,7 +171,7 @@ export class ServiceAuthentification {
     const ligne = this.base
       .prepare('SELECT * FROM utilisateurs WHERE email = ?')
       .get(email.toLowerCase().trim()) as LigneUtilisateur | undefined;
-    const empreinte = ligne?.empreinte ?? (await hacherMotDePasse('empreinte-de-comparaison'));
+    const empreinte = ligne?.empreinte ?? (await ServiceAuthentification.empreinteDeComparaison());
     const valide = await verifierMotDePasse(motDePasse, empreinte);
     return Boolean(ligne) && valide && ligne?.actif === 1;
   }

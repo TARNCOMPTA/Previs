@@ -44,7 +44,7 @@ export async function construireApplication(config: Configuration): Promise<Appl
     trustProxy: config.confianceProxy,
   });
 
-  ajouterEntetesSecurite(app);
+  ajouterEntetesSecurite(app, config);
 
   // Un dossier volumineux pèse une cinquantaine de kilo-octets et ses états calculés
   // le double : la compression divise ces échanges par dix sur une liaison lente.
@@ -104,7 +104,7 @@ export async function construireApplication(config: Configuration): Promise<Appl
  * ni ressource distante. Seules les feuilles de style en ligne sont tolérées, React
  * posant des attributs `style` sur les éléments qu'il rend.
  */
-function ajouterEntetesSecurite(app: import('fastify').FastifyInstance): void {
+function ajouterEntetesSecurite(app: import('fastify').FastifyInstance, config: Configuration): void {
   const politique = [
     "default-src 'self'",
     "script-src 'self'",
@@ -118,7 +118,24 @@ function ajouterEntetesSecurite(app: import('fastify').FastifyInstance): void {
     "frame-ancestors 'none'",
   ].join('; ');
 
+  /*
+   * HSTS, posé par l'application et non seulement par le frontal.
+   *
+   * Sans lui, la première visite tapée « previs.tarncompta.fr » part en clair : un
+   * intercepteur sur le chemin la garde en clair et lit la session. La redirection du
+   * frontal vers HTTPS n'y change rien — elle arrive trop tard, la requête est déjà passée.
+   * L'en-tête n'est posé que si l'adresse publique est en HTTPS : un montage local en clair
+   * n'a pas à s'interdire lui-même.
+   *
+   * « preload » n'y est pas volontairement : l'inscription à la liste des navigateurs est
+   * un engagement difficile à défaire, qui appartient au cabinet et non au code.
+   */
+  const hsts = config.urlPublique.startsWith('https://')
+    ? 'max-age=31536000; includeSubDomains'
+    : '';
+
   app.addHook('onSend', async (_requete, reponse, charge) => {
+    if (hsts) reponse.header('strict-transport-security', hsts);
     // L'écran de consentement OAuth pose la sienne, plus étroite, mais qui doit
     // autoriser la soumission du formulaire vers l'adresse de retour du client :
     // ne pas l'écraser.

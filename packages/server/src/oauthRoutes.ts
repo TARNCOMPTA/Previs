@@ -40,11 +40,49 @@ function echapper(texte: unknown): string {
  * fragilité de plus. Aucun script, aucune ressource distante — la politique de contenu
  * de l'application les refuserait de toute façon.
  */
+/**
+ * L'écran de consentement OAuth.
+ *
+ * Deux blocs y sont là pour une raison de sécurité, non de décoration.
+ *
+ * **La destination.** Un consentement qui ne dit pas OÙ part l'autorisation n'est pas un
+ * consentement. Sans elle, l'enchaînement suivant fonctionnait, vérifié contre le serveur :
+ * un inconnu enregistre un client — l'enregistrement dynamique de la RFC 7591 est ouvert
+ * par nécessité, un connecteur MCP s'enregistre lui-même — en choisissant son nom et son
+ * adresse de retour ; il envoie au comptable un lien vers cette page, qui s'affiche sur le
+ * domaine du cabinet, avec le logo du cabinet, et réclame l'adresse et le mot de passe. Le
+ * nom affiché était celui que l'inconnu avait choisi, « Previs — vérification de sécurité
+ * obligatoire » par exemple, et « attaquant.example » n'apparaissait nulle part.
+ *
+ * **L'avertissement de première autorisation.** Un connecteur qui n'a jamais obtenu de jeton
+ * est soit légitime et nouveau, soit l'appât ci-dessus. Le dire ne coûte rien à celui qui
+ * branche son outil pour la première fois, et donne à l'autre le seul indice qui compte.
+ */
+/**
+ * L'origine d'une adresse de retour, telle qu'elle sera contactée.
+ *
+ * On ne montre que le schéma et l'hôte : c'est ce qui décide où part l'autorisation, et un
+ * chemin long noierait l'information. Un port non standard est conservé — « localhost:7777 »
+ * n'est pas « localhost:443 ».
+ */
+function origineDe(uri: string): string {
+  try {
+    const u = new URL(uri);
+    return u.origin;
+  } catch {
+    return uri.slice(0, 120);
+  }
+}
+
 function pageConsentement(entree: {
   demandeId: string;
   nomClient: string;
   cabinet: string;
   logo: string;
+  /** L'origine de l'adresse de retour, telle qu'elle sera contactée. */
+  destination?: string;
+  /** Vrai quand ce connecteur n'a encore jamais obtenu de jeton. */
+  jamaisAutorise?: boolean;
   erreur?: string;
   courriel?: string;
 }): string {
@@ -84,6 +122,13 @@ function pageConsentement(entree: {
   button.principal { background: var(--bleu); border-color: var(--bleu); color: #fff; }
   .erreur { background: #FDECEA; border: 1px solid #F5C6C2; color: #B3261E; padding: 10px 13px;
             border-radius: 7px; font-size: 13.5px; margin-bottom: 16px; }
+  .destination { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--trait);
+                 font-size: 13px; color: var(--doux); }
+  .destination b { display: block; margin-top: 3px; font-size: 14px; color: var(--texte);
+                   font-family: ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; }
+  .vigilance { background: #FFF6E5; border: 1px solid #F0D9A8; color: #7A4F04; padding: 11px 13px;
+               border-radius: 7px; font-size: 13px; margin-bottom: 16px; }
+  .vigilance b { display: block; margin-bottom: 2px; }
   .pied { margin-top: 18px; font-size: 12px; color: var(--doux); text-align: center; }
   @media (prefers-color-scheme: dark) {
     :root { --texte: #E8ECF5; --doux: #9AA3B5; --trait: #2A3244; --fond: #0E1219; }
@@ -102,6 +147,13 @@ function pageConsentement(entree: {
   </div>
   <div class="corps">
     ${entree.erreur ? `<div class="erreur">${echapper(entree.erreur)}</div>` : ''}
+    ${
+      entree.jamaisAutorise
+        ? `<div class="vigilance"><b>Ce connecteur n’a jamais été autorisé sur ce serveur.</b>
+             Si vous ne branchez pas un outil vous-même en ce moment, fermez cette page :
+             le nom ci-dessous est choisi par celui qui demande l’accès, pas par le cabinet.</div>`
+        : ''
+    }
     <div class="demande">
       <strong>${echapper(entree.nomClient || 'Une application')}</strong> demande à consulter et
       modifier les dossiers prévisionnels de votre compte.
@@ -110,6 +162,11 @@ function pageConsentement(entree: {
         <li>produire des documents PDF</li>
         <li>sans accès à l’administration ni aux comptes</li>
       </ul>
+      ${
+        entree.destination
+          ? `<div class="destination">L’autorisation sera envoyée à :<b>${echapper(entree.destination)}</b></div>`
+          : ''
+      }
     </div>
     <form method="post" action="/oauth/autoriser">
       <input type="hidden" name="demande" value="${echapper(entree.demandeId)}">
@@ -353,6 +410,8 @@ export async function enregistrerRoutesOauth(app: FastifyInstance, ctx: Contexte
           pageConsentement({
             demandeId,
             nomClient: client?.nom ?? '',
+            destination: origineDe(p.redirect_uri),
+            jamaisAutorise: ctx.oauth.jamaisAutorise(p.client_id),
             ...identiteCabinet(),
           }),
         );
@@ -399,6 +458,8 @@ export async function enregistrerRoutesOauth(app: FastifyInstance, ctx: Contexte
             pageConsentement({
               demandeId: corps.demande,
               nomClient: ctx.oauth.lireClient(parametres.client_id)?.nom ?? '',
+              destination: origineDe(parametres.redirect_uri),
+              jamaisAutorise: ctx.oauth.jamaisAutorise(parametres.client_id),
               ...identiteCabinet(),
               erreur: message,
               courriel,

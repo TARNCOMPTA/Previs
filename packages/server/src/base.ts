@@ -266,5 +266,20 @@ export function purgerSessions(base: BaseDonnees): number {
   // Le point d'entrée qui émet un défi de connexion est nécessairement public : sans
   // cette purge, une boucle anonyme ferait grossir la table jusqu'à remplir le disque.
   base.prepare('DELETE FROM webauthn_defis WHERE expire_le < ?').run(maintenant);
+
+  /*
+   * Les connecteurs enregistrés puis jamais autorisés.
+   *
+   * L'enregistrement dynamique (RFC 7591) est ouvert par nécessité : un connecteur MCP
+   * s'enregistre lui-même, avant toute authentification. Rien ne purgeait cette table, si
+   * bien qu'une boucle anonyme la faisait grossir indéfiniment — et qu'un appât enregistré
+   * pour un hameçonnage y restait à demeure. Un connecteur qui n'a obtenu aucun jeton en
+   * sept jours n'en obtiendra plus : sa demande d'autorisation a expiré depuis longtemps.
+   * Un connecteur déjà autorisé, lui, n'est jamais purgé — c'est un outil en service.
+   */
+  const ilYASeptJours = new Date(Date.now() - 7 * 86400000).toISOString();
+  base
+    .prepare('DELETE FROM oauth_clients WHERE derniere_utilisation IS NULL AND cree_le < ?')
+    .run(ilYASeptJours);
   return n;
 }
