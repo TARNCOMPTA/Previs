@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Installation de Previs sur un VPS Debian ou Ubuntu neuf.
+# Installation de Previs sur un VPS Debian ou Ubuntu.
 #
 #   git clone https://github.com/TARNCOMPTA/Previs.git /opt/previs
 #   cd /opt/previs
@@ -9,28 +9,42 @@
 # Le script est idempotent : le relancer met le logiciel à jour sans rien perdre.
 # Les secrets déjà présents dans .env ne sont jamais régénérés.
 #
+# COHABITATION AVEC D'AUTRES SITES
+#
+# Le script est conçu pour un serveur qui héberge déjà autre chose. Il ne touche
+# jamais au Node du système, n'active jamais le pare-feu de lui-même, ne retire
+# aucun hôte virtuel nginx, et choisit un port libre s'il en trouve un occupé.
+# Lancer d'abord --simulation pour voir l'inventaire et le plan sans rien modifier.
+#
 set -euo pipefail
 
 # ─── Paramètres ───────────────────────────────────────────────────────────────
 DOMAINE="${DOMAINE:-previs.tarncompta.fr}"
 COURRIEL="${COURRIEL:-}"
 RACINE="${RACINE:-/opt/previs}"
+BOOTSTRAP_COURRIEL="${BOOTSTRAP_COURRIEL:-aymeric@tarncompta.fr}"
 UTILISATEUR="previs"
-PORT_INTERNE="8080"
+PORT_INTERNE="${PORT_INTERNE:-}"
 BRANCHE="${BRANCHE:-main}"
 SANS_TLS=0
-SANS_PARE_FEU=0
+# Le pare-feu est en adhésion volontaire : l'activer sur un serveur qui héberge
+# d'autres services couperait tout ce qui n'écoute pas sur 22, 80 ou 443.
+PARE_FEU=0
+SIMULATION=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --domaine) DOMAINE="$2"; shift 2 ;;
     --courriel) COURRIEL="$2"; shift 2 ;;
+    --compte) BOOTSTRAP_COURRIEL="$2"; shift 2 ;;
     --branche) BRANCHE="$2"; shift 2 ;;
     --racine) RACINE="$2"; shift 2 ;;
+    --port) PORT_INTERNE="$2"; shift 2 ;;
     --sans-tls) SANS_TLS=1; shift ;;
-    --sans-pare-feu) SANS_PARE_FEU=1; shift ;;
+    --pare-feu) PARE_FEU=1; shift ;;
+    --simulation) SIMULATION=1; shift ;;
     -h|--help)
-      sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'
       exit 0 ;;
     *) echo "Option inconnue : $1" >&2; exit 2 ;;
   esac
@@ -80,34 +94,189 @@ if [[ $SANS_TLS -eq 0 ]]; then
   fi
 fi
 
+# ─── Inventaire du serveur ────────────────────────────────────────────────────
+# Ce serveur héberge peut-être déjà des sites : avant de rien modifier, on montre
+# ce qui existe et on choisit des réglages qui n'y touchent pas.
+etape "Ce qui tourne déjà sur ce serveur"
+
+if command -v nginx >/dev/null; then
+  ok "nginx présent ($(nginx -v 2>&1 | sed 's#.*/##'))"
+  HOTES="$(ls -1 /etc/nginx/sites-enabled/ 2>/dev/null | tr '\n' ' ' || true)"
+  [[ -n "${HOTES// }" ]] && avert "Hôtes virtuels actifs, laissés intacts : $HOTES"
+else
+  avert "nginx absent, il sera installé"
+fi
+
+# Les ports à l'écoute sont lus dans /proc : ni ss (iproute2) ni strtonum (absent
+# de l'awk de Debian) ne sont supposés présents. La conversion se fait en bash.
+TABLES_TCP=()
+for fichier in /proc/net/tcp /proc/net/tcp6; do
+  [[ -r "$fichier" ]] && TABLES_TCP+=("$fichier")
+done
+
+ECOUTES=""
+for fichier in "${TABLES_TCP[@]}"; do
+  while read -r hexa; do
+    [[ -n "$hexa" ]] && ECOUTES="$ECOUTES $((16#$hexa))"
+  done < <(awk 'FNR > 1 && $4 == "0A" { split($2, a, ":"); print a[2] }' "$fichier")
+done
+if [[ -n "${ECOUTES// }" ]]; then
+  # shellcheck disable=SC2086
+  avert "Ports déjà à l'écoute, non touchés : $(printf '%s\n' $ECOUTES | sort -un | tr '\n' ' ')"
+fi
+
+
+[[ ${#TABLES_TCP[@]} -gt 0 ]] \
+  || avert "Impossible de lire /proc/net/tcp : les collisions de port ne seront pas détectées.
+    Imposer un port libre avec --port."
+
+ETAT_UFW="absent"
+command -v ufw >/dev/null && ETAT_UFW="$(ufw status 2>/dev/null | head -1 | sed 's/^Status: //')"
+ok "Pare-feu ufw : $ETAT_UFW"
+
+if [[ -d /etc/letsencrypt/live ]]; then
+  CERTS="$(ls -1 /etc/letsencrypt/live 2>/dev/null | tr '\n' ' ' || true)"
+  [[ -n "${CERTS// }" ]] && avert "Certificats existants, non touchés : $CERTS"
+fi
+
+NODE_SYSTEME="$(command -v node 2>/dev/null || true)"
+if [[ -n "$NODE_SYSTEME" ]]; then
+  ok "Node du système : $("$NODE_SYSTEME" --version) ($NODE_SYSTEME) — il ne sera jamais remplacé"
+else
+  avert "Aucun Node sur le système"
+fi
+
+# ─── Choix d'un port libre ────────────────────────────────────────────────────
+# La lecture passe par /proc, toujours présent sous Linux, plutôt que par ss.
+# Un fichier absent — /proc/net/tcp6 sur un serveur sans IPv6 — ne doit pas faire
+# conclure « port libre » : seules les tables réellement lisibles sont examinées.
+port_occupe() {
+  local hexa
+  hexa="$(printf '%04X' "$1")"
+  [[ ${#TABLES_TCP[@]} -gt 0 ]] || return 1
+  awk -v p="$hexa" \
+    'FNR > 1 && $4 == "0A" { split($2, a, ":"); if (a[2] == p) trouve = 1 }
+     END { exit !trouve }' "${TABLES_TCP[@]}"
+}
+
+PORT_EXISTANT=""
+[[ -f "$RACINE/.env" ]] && PORT_EXISTANT="$(sed -n 's/^PORT=\([0-9]\+\)$/\1/p' "$RACINE/.env" | head -1)"
+
+if [[ -n "$PORT_INTERNE" ]]; then
+  # Port imposé : il ne doit être occupé par personne d'autre que Previs lui-même.
+  if [[ "$PORT_INTERNE" != "$PORT_EXISTANT" ]] && port_occupe "$PORT_INTERNE"; then
+    mauvais "Le port $PORT_INTERNE demandé est déjà occupé par un autre service."
+  fi
+elif [[ -n "$PORT_EXISTANT" ]]; then
+  # Relance : on garde le port déjà configuré. Le détecter à nouveau le trouverait
+  # occupé — par Previs — et en choisirait un autre, désaccordant .env et nginx.
+  PORT_INTERNE="$PORT_EXISTANT"
+  ok "Port repris de la configuration en place : $PORT_INTERNE"
+else
+  for candidat in 8080 8081 8082 8083 8084 8090 8091 8092; do
+    if ! port_occupe "$candidat"; then PORT_INTERNE="$candidat"; break; fi
+  done
+  [[ -n "$PORT_INTERNE" ]] || mauvais "Aucun port libre trouvé entre 8080 et 8092. En imposer un avec --port."
+fi
+ok "Previs écoutera sur 127.0.0.1:$PORT_INTERNE, jamais exposé directement"
+
+# ─── Plan, et sortie en simulation ────────────────────────────────────────────
+if [[ $SIMULATION -eq 1 ]]; then
+  etape "Plan — rien n'a été modifié"
+  printf '  Ce que le script ferait :\n'
+  printf '   • installer les paquets manquants (nginx, git, openssl, polices%s)\n' \
+    "$([[ $SANS_TLS -eq 0 ]] && echo ', certbot')"
+  if [[ -z "$NODE_SYSTEME" ]] || [[ "$(printf '%s' "${NODE_SYSTEME:+$("$NODE_SYSTEME" --version)}" | sed 's/^v//' | cut -d. -f1)" -lt 20 ]] 2>/dev/null; then
+    printf '   • installer un Node 22 PRIVÉ dans %s/node — le Node du système reste intact\n' "$RACINE"
+  else
+    printf '   • réutiliser le Node du système, sans y toucher\n'
+  fi
+  printf '   • créer le compte système « %s » et construire les quatre paquets\n' "$UTILISATEUR"
+  printf '   • écrire /etc/systemd/system/previs.service et démarrer le service sur 127.0.0.1:%s\n' "$PORT_INTERNE"
+  printf '   • ajouter /etc/nginx/sites-available/previs pour %s — aucun autre hôte virtuel touché\n' "$DOMAINE"
+  [[ $SANS_TLS -eq 0 ]] && printf '   • obtenir un certificat pour %s seulement\n' "$DOMAINE"
+  if [[ $PARE_FEU -eq 1 ]]; then
+    printf '   • ouvrir 80 et 443 dans ufw (sans activer le pare-feu s’il est inactif)\n'
+  else
+    printf '   • ne PAS toucher au pare-feu\n'
+  fi
+  printf '   • installer /etc/cron.daily/previs-sauvegarde\n'
+  printf '\n  Relancer sans --simulation pour exécuter.\n\n'
+  exit 0
+fi
+
 # ─── Paquets système ──────────────────────────────────────────────────────────
 etape "Paquets système"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq --no-install-recommends \
-  ca-certificates curl git gnupg nginx openssl sqlite3 \
-  fonts-liberation fonts-dejavu-core >/dev/null
-ok "nginx, git, openssl, sqlite3 et les polices sont en place"
 
+# Seuls les paquets manquants sont installés : rien n'est mis à niveau sous les
+# pieds d'un autre site, et nginx en service n'est pas remplacé.
+A_INSTALLER=""
+for paquet in ca-certificates curl git gnupg nginx openssl sqlite3 xz-utils \
+              fonts-liberation fonts-dejavu-core; do
+  dpkg -s "$paquet" >/dev/null 2>&1 || A_INSTALLER="$A_INSTALLER $paquet"
+done
 if [[ $SANS_TLS -eq 0 ]]; then
-  apt-get install -y -qq --no-install-recommends certbot python3-certbot-nginx >/dev/null
-  ok "certbot installé"
+  for paquet in certbot python3-certbot-nginx; do
+    dpkg -s "$paquet" >/dev/null 2>&1 || A_INSTALLER="$A_INSTALLER $paquet"
+  done
 fi
 
-# ─── Node.js 22 ───────────────────────────────────────────────────────────────
-etape "Node.js"
-VERSION_NODE="$(node --version 2>/dev/null | sed 's/^v//' | cut -d. -f1 || echo 0)"
-if [[ "${VERSION_NODE:-0}" -lt 20 ]]; then
-  install -d -m 0755 /etc/apt/keyrings
-  curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
-    | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg
-  chmod 0644 /etc/apt/keyrings/nodesource.gpg
-  echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main" \
-    > /etc/apt/sources.list.d/nodesource.list
-  apt-get update -qq
-  apt-get install -y -qq nodejs >/dev/null
+if [[ -n "${A_INSTALLER// }" ]]; then
+  # shellcheck disable=SC2086
+  apt-get install -y -qq --no-install-recommends $A_INSTALLER >/dev/null
+  ok "Paquets ajoutés :${A_INSTALLER}"
+else
+  ok "Tous les paquets nécessaires étaient déjà là — rien n'a été installé"
 fi
-ok "Node $(node --version), npm $(npm --version)"
+
+# ─── Node.js ──────────────────────────────────────────────────────────────────
+#
+# Le Node du système n'est JAMAIS remplacé : un autre site du serveur en dépend
+# peut-être. S'il est trop ancien, un Node 22 est installé pour Previs seul, dans
+# son propre répertoire, et c'est celui-là que l'unité systemd appellera.
+etape "Node.js"
+VERSION_NODE=0
+[[ -n "$NODE_SYSTEME" ]] && VERSION_NODE="$("$NODE_SYSTEME" --version 2>/dev/null | sed 's/^v//' | cut -d. -f1)"
+
+if [[ "${VERSION_NODE:-0}" -ge 20 ]]; then
+  NODE="$NODE_SYSTEME"
+  ok "Node du système réutilisé tel quel : $("$NODE" --version)"
+else
+  NODE_PRIVE="$RACINE/node"
+  if [[ -x "$NODE_PRIVE/bin/node" ]] \
+     && [[ "$("$NODE_PRIVE/bin/node" --version | sed 's/^v//' | cut -d. -f1)" -ge 20 ]]; then
+    ok "Node privé déjà installé : $("$NODE_PRIVE/bin/node" --version)"
+  else
+    case "$(uname -m)" in
+      x86_64) ARCHI="x64" ;;
+      aarch64|arm64) ARCHI="arm64" ;;
+      *) mauvais "Architecture $(uname -m) non gérée. Installer Node 20 ou plus, puis relancer." ;;
+    esac
+    avert "Node absent ou trop ancien (${VERSION_NODE:-aucun}) : installation privée dans $NODE_PRIVE."
+
+    INDEX="https://nodejs.org/download/release/latest-v22.x"
+    TEMPO="$(mktemp -d)"
+    curl -fsSL "$INDEX/SHASUMS256.txt" -o "$TEMPO/SHASUMS256.txt" \
+      || mauvais "Impossible de récupérer la liste des empreintes Node."
+    ARCHIVE="$(awk -v a="linux-$ARCHI.tar.xz" '$2 ~ a {print $2}' "$TEMPO/SHASUMS256.txt" | head -1)"
+    [[ -n "$ARCHIVE" ]] || mauvais "Aucune archive Node pour linux-$ARCHI."
+    curl -fsSL "$INDEX/$ARCHIVE" -o "$TEMPO/$ARCHIVE" || mauvais "Téléchargement de Node échoué."
+    # Un binaire téléchargé se vérifie : on contrôle l'empreinte publiée.
+    ( cd "$TEMPO" && grep " $ARCHIVE\$" SHASUMS256.txt | sha256sum -c --quiet - ) \
+      || mauvais "L'empreinte de $ARCHIVE ne correspond pas. Téléchargement rejeté."
+    rm -rf "$NODE_PRIVE"
+    install -d -m 0755 "$NODE_PRIVE"
+    tar -xJf "$TEMPO/$ARCHIVE" -C "$NODE_PRIVE" --strip-components=1
+    rm -rf "$TEMPO"
+    ok "Node privé installé : $("$NODE_PRIVE/bin/node" --version) (empreinte vérifiée)"
+  fi
+  NODE="$NODE_PRIVE/bin/node"
+  # npm et npx du même paquet doivent primer, sans polluer le PATH du système.
+  export PATH="$NODE_PRIVE/bin:$PATH"
+fi
+ok "Node retenu pour Previs : $NODE ($("$NODE" --version)), npm $(npm --version)"
 
 # ─── Compte de service ────────────────────────────────────────────────────────
 etape "Compte de service"
@@ -151,7 +320,9 @@ trouver_chromium() {
 }
 
 CHROMIUM="$(trouver_chromium || true)"
-if [[ -z "$CHROMIUM" ]]; then
+if [[ -z "$CHROMIUM" && "${ID:-}" == "debian" ]]; then
+  # Sous Debian seulement : le paquet chromium est un vrai binaire. Sous Ubuntu ce
+  # n'est qu'une coquille qui entraînerait snapd sur un serveur qui n'en a pas.
   apt-get install -y -qq --no-install-recommends chromium >/dev/null 2>&1 || true
   CHROMIUM="$(trouver_chromium || true)"
 fi
@@ -159,10 +330,10 @@ if [[ -z "$CHROMIUM" ]]; then
   # Sous Ubuntu, le paquet « chromium » n'est qu'une coquille renvoyant vers snap :
   # playwright-core installe alors son propre Chromium, ainsi que ses dépendances.
   avert "Aucun Chromium utilisable dans la distribution. Installation par playwright-core."
-  node node_modules/playwright-core/cli.js install-deps chromium >/dev/null 2>&1 || \
+  "$NODE" node_modules/playwright-core/cli.js install-deps chromium >/dev/null 2>&1 || \
     avert "L'installation des dépendances de rendu a signalé une erreur ; on poursuit."
   PLAYWRIGHT_BROWSERS_PATH="$RACINE/chromium" \
-    node node_modules/playwright-core/cli.js install chromium >/dev/null
+    "$NODE" node_modules/playwright-core/cli.js install chromium >/dev/null
   CHROMIUM="$(trouver_chromium || true)"
 fi
 [[ -n "$CHROMIUM" ]] || mauvais "Chromium reste introuvable : le PDF ne pourrait pas être produit."
@@ -203,7 +374,7 @@ TRUST_PROXY=loopback
 LOG_LEVEL=info
 
 # Premier compte administrateur, créé au premier démarrage seulement.
-BOOTSTRAP_ADMIN_EMAIL=aymeric@tarncompta.fr
+BOOTSTRAP_ADMIN_EMAIL=$BOOTSTRAP_COURRIEL
 BOOTSTRAP_ADMIN_PASSWORD=$MOT_DE_PASSE_INITIAL
 BOOTSTRAP_ADMIN_NOM=Aymeric HANGARD
 CONFIG
@@ -216,6 +387,10 @@ else
   else
     echo "CHROMIUM_PATH=$CHROMIUM" >> "$RACINE/.env"
   fi
+  if [[ "$PORT_INTERNE" != "$PORT_EXISTANT" ]]; then
+    sed -i "s/^PORT=.*/PORT=$PORT_INTERNE/" "$RACINE/.env"
+    avert "Port modifié dans .env : $PORT_EXISTANT → $PORT_INTERNE"
+  fi
   ok ".env conservé (secrets inchangés), chemin de Chromium rafraîchi"
 fi
 
@@ -227,7 +402,8 @@ ok "Répertoire de données en 0700, réservé au service"
 
 # ─── Service systemd ──────────────────────────────────────────────────────────
 etape "Service systemd"
-sed "s#/opt/previs#$RACINE#g" "$RACINE/deploy/previs.service" > /etc/systemd/system/previs.service
+sed -e "s#/opt/previs#$RACINE#g" -e "s#^ExecStart=.*#ExecStart=$NODE packages/server/dist/index.js#" \
+  "$RACINE/deploy/previs.service" > /etc/systemd/system/previs.service
 systemctl daemon-reload
 systemctl enable --quiet previs
 systemctl restart previs
@@ -240,10 +416,31 @@ curl -fsS --max-time 5 "http://127.0.0.1:$PORT_INTERNE/api/sante" >/dev/null \
   || mauvais "Le service ne répond pas. Voir : journalctl -u previs -n 50 --no-pager"
 ok "Service démarré et répondant sur 127.0.0.1:$PORT_INTERNE"
 
+if [[ $NOUVELLE_INSTALLATION -eq 1 ]]; then
+  # Le compte administrateur est créé au démarrage : ses identifiants sont consignés
+  # ici, et non dans le récapitulatif final. Un échec d'une étape ultérieure — nginx,
+  # certificat — laisserait sinon un compte créé dont personne ne connaît le mot de passe.
+  printf '%s\n' \
+    "Premier accès à Previs" \
+    "Adresse      : $BOOTSTRAP_COURRIEL" \
+    "Mot de passe : $MOT_DE_PASSE_INITIAL" \
+    "" \
+    "À changer dès la première connexion, puis supprimer ce fichier :" \
+    "  sudo rm $RACINE/premier-acces.txt" \
+    > "$RACINE/premier-acces.txt"
+  chown root:root "$RACINE/premier-acces.txt"
+  chmod 0600 "$RACINE/premier-acces.txt"
+  # Le compte existe désormais en base : le mot de passe d'amorçage n'a plus d'utilité
+  # pour le service et n'a rien à faire dans un fichier qu'il peut lire.
+  sed -i 's/^BOOTSTRAP_ADMIN_PASSWORD=.*/BOOTSTRAP_ADMIN_PASSWORD=/' "$RACINE/.env"
+  ok "Identifiants du premier compte consignés dans premier-acces.txt (0600, root seul)"
+fi
+
 # ─── nginx et certificat ──────────────────────────────────────────────────────
 etape "nginx"
 install -d -m 0755 /var/www/certbot
-rm -f /etc/nginx/sites-enabled/default
+# L'hôte virtuel par défaut n'est PAS retiré : ce peut être un site en service.
+# Le nôtre porte server_name $DOMAINE, nginx route par nom, la cohabitation va de soi.
 
 # Première phase : un hôte virtuel en HTTP seul. Le fichier complet du dépôt
 # référence des certificats qui n'existent pas encore ; nginx refuserait de démarrer.
@@ -282,8 +479,8 @@ if [[ $SANS_TLS -eq 0 ]]; then
 
   # Seconde phase : l'hôte virtuel complet du dépôt, avec TLS et les réglages
   # propres à l'export PDF et au point d'entrée MCP.
-  sed "s/previs\.tarncompta\.fr/$DOMAINE/g" "$RACINE/deploy/nginx.previs.conf" \
-    > /etc/nginx/sites-available/previs
+  sed -e "s/previs\.tarncompta\.fr/$DOMAINE/g" -e "s/127\.0\.0\.1:8080/127.0.0.1:$PORT_INTERNE/g" \
+    "$RACINE/deploy/nginx.previs.conf" > /etc/nginx/sites-available/previs
   nginx -t >/dev/null 2>&1 || mauvais "Configuration nginx invalide après passage en HTTPS : nginx -t"
   systemctl reload nginx
   ok "HTTPS actif, redirection du port 80 en place"
@@ -292,14 +489,22 @@ if [[ $SANS_TLS -eq 0 ]]; then
 fi
 
 # ─── Pare-feu ─────────────────────────────────────────────────────────────────
-if [[ $SANS_PARE_FEU -eq 0 ]]; then
-  etape "Pare-feu"
-  apt-get install -y -qq --no-install-recommends ufw >/dev/null
-  ufw allow OpenSSH >/dev/null 2>&1 || ufw allow 22/tcp >/dev/null
+etape "Pare-feu"
+if [[ $PARE_FEU -eq 0 ]]; then
+  ok "Non touché. Ce serveur héberge d'autres services : leurs ports doivent rester ouverts."
+  if [[ "$ETAT_UFW" == "inactive" || "$ETAT_UFW" == "absent" ]]; then
+    avert "Aucun pare-feu actif. Pour en poser un, ouvrir d'abord TOUS les ports utiles
+    aux autres sites, puis : sudo ufw allow 80/tcp && sudo ufw allow 443/tcp && sudo ufw enable"
+  fi
+elif [[ "$ETAT_UFW" == "active" ]]; then
+  # Le pare-feu tourne déjà : ajouter deux règles est sans effet sur le reste.
   ufw allow 80/tcp >/dev/null
   ufw allow 443/tcp >/dev/null
-  ufw --force enable >/dev/null
-  ok "ufw actif : 22, 80 et 443 seulement — le port $PORT_INTERNE reste privé"
+  ok "80 et 443 ouverts dans le pare-feu déjà actif — aucune autre règle modifiée"
+else
+  # Activer un pare-feu fermé par défaut couperait tout ce qui n'est pas 22/80/443.
+  avert "ufw est $ETAT_UFW : le script ne l'active pas, cela couperait vos autres services.
+    Ouvrir d'abord les ports dont ils ont besoin, puis activer ufw à la main."
 fi
 
 # ─── Sauvegarde quotidienne ───────────────────────────────────────────────────
@@ -316,7 +521,7 @@ set -e
 cd "$RACINE"
 horodatage=\$(date +%Y%m%d-%H%M%S)
 destination="$RACINE/sauvegardes/previs-\$horodatage.db"
-node -e "
+"$NODE" -e "
 const Base = require('better-sqlite3');
 const base = new Base(process.argv[1], { readonly: true });
 base.backup(process.argv[2]).then(() => base.close());
@@ -370,14 +575,14 @@ if [[ $NOUVELLE_INSTALLATION -eq 1 ]]; then
   BISCUITS="$(mktemp)"
   if curl -fsS --max-time 20 -c "$BISCUITS" -X POST "$BASE_PUBLIQUE/api/auth/connexion" \
        -H 'content-type: application/json' \
-       -d "{\"email\":\"aymeric@tarncompta.fr\",\"motDePasse\":\"$MOT_DE_PASSE_INITIAL\"}" \
+       -d "{\"email\":\"$BOOTSTRAP_COURRIEL\",\"motDePasse\":\"$MOT_DE_PASSE_INITIAL\"}" \
        -o /dev/null; then
     # Le corps de la réponse porte le dossier entier, où chaque ligne a son propre
     # « id » : il faut l'analyser, pas y chercher un motif.
     IDENTIFIANT="$(curl -fsS --max-time 20 -b "$BISCUITS" -X POST "$BASE_PUBLIQUE/api/dossiers" \
       -H 'content-type: application/json' -H "origin: $BASE_PUBLIQUE" \
       -d '{"nom":"Essai d’installation","modele":"IS"}' \
-      | node -e 'let t="";process.stdin.on("data",c=>t+=c).on("end",()=>{try{process.stdout.write(String(JSON.parse(t).id??""))}catch{}})')"
+      | "$NODE" -e 'let t="";process.stdin.on("data",c=>t+=c).on("end",()=>{try{process.stdout.write(String(JSON.parse(t).id??""))}catch{}})')"
     if [[ -n "$IDENTIFIANT" ]]; then
       PDF="$(mktemp)"
       if curl -fsS --max-time 120 -b "$BISCUITS" -X POST \
@@ -415,25 +620,11 @@ printf '  Mise à jour      cd %s && sudo ./deploy/installer.sh --domaine %s --c
   "$RACINE" "$DOMAINE" "${COURRIEL:-…}"
 
 if [[ $NOUVELLE_INSTALLATION -eq 1 ]]; then
-  # Le compte existe maintenant en base : le mot de passe d'amorçage n'a plus
-  # d'utilité pour le service et n'a rien à faire dans un fichier qu'il peut lire.
-  sed -i 's/^BOOTSTRAP_ADMIN_PASSWORD=.*/BOOTSTRAP_ADMIN_PASSWORD=/' "$RACINE/.env"
-  printf '%s\n' \
-    "Premier accès à Previs — $BASE_PUBLIQUE" \
-    "Adresse      : aymeric@tarncompta.fr" \
-    "Mot de passe : $MOT_DE_PASSE_INITIAL" \
-    "" \
-    "À changer dès la première connexion, puis supprimer ce fichier :" \
-    "  sudo rm $RACINE/premier-acces.txt" \
-    > "$RACINE/premier-acces.txt"
-  chown root:root "$RACINE/premier-acces.txt"
-  chmod 0600 "$RACINE/premier-acces.txt"
-
   printf '\n\033[1;33m  ── Premier compte administrateur ──\033[0m\n'
-  printf '  Adresse        aymeric@tarncompta.fr\n'
+  printf '  Adresse        %s\n' "$BOOTSTRAP_COURRIEL"
   printf '  Mot de passe   \033[1m%s\033[0m\n' "$MOT_DE_PASSE_INITIAL"
-  printf '\n  \033[33mIl a été retiré de .env et recopié dans %s/premier-acces.txt,\n' "$RACINE"
-  printf '  lisible par root seul. Le changer à la première connexion, puis supprimer ce fichier.\033[0m\n'
+  printf '\n  \033[33mRetiré de .env, recopié dans %s/premier-acces.txt (root seul).\n' "$RACINE"
+  printf '  Le changer à la première connexion, puis supprimer ce fichier.\033[0m\n'
 fi
 
 printf '\n  Prochaine étape : ouvrir %s, se connecter, puis renseigner\n' "$BASE_PUBLIQUE"

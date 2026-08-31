@@ -2,6 +2,26 @@
 
 Debian 12 ou Ubuntu 24.04, sur un serveur neuf.
 
+## Si le serveur héberge déjà d'autres sites
+
+C'est le cas courant, et le script est fait pour. Ce qu'il ne fait **jamais** :
+
+| Il ne fait pas | Pourquoi c'est important |
+|---|---|
+| Remplacer le Node du système | Un autre site tourne peut-être sous Node 18 ou 20. Si le Node en place est trop ancien, un Node 22 est installé **pour Previs seul**, dans `/opt/previs/node`, empreinte vérifiée. |
+| Activer le pare-feu | Activer ufw fermé par défaut couperait tout ce qui n'écoute pas sur 22, 80 ou 443. Le script n'y touche pas, sauf `--pare-feu` — et même alors, il n'ajoute deux règles que si ufw est **déjà actif**. |
+| Retirer un hôte virtuel nginx | Y compris `default`. nginx route par nom de domaine ; la cohabitation va de soi. |
+| Occuper un port pris | Il lit les ports à l'écoute et en choisit un libre entre 8080 et 8092. Le port retenu est écrit dans `.env`, puis repris tel quel aux relances. |
+| Mettre à niveau des paquets | Seuls les paquets **manquants** sont installés. Un nginx en service n'est pas remplacé. |
+| Toucher aux certificats existants | Le certificat est demandé pour le seul domaine indiqué, par la méthode `webroot`. |
+
+Commencez toujours par une simulation : elle dresse l'inventaire du serveur et
+affiche le plan **sans rien modifier**.
+
+```bash
+sudo ./deploy/installer.sh --domaine previs.tarncompta.fr --simulation
+```
+
 ## En une commande
 
 **Avant de commencer :** l'enregistrement DNS `A` de `previs.tarncompta.fr` doit
@@ -35,8 +55,10 @@ Comptez cinq à dix minutes, l'essentiel étant la construction.
 | `--courriel` | Adresse de notification Let's Encrypt. Obligatoire sauf `--sans-tls`. |
 | `--branche` | Branche à déployer. Par défaut `main`. |
 | `--racine` | Répertoire d'installation. Par défaut `/opt/previs`. |
+| `--port` | Port interne imposé. Par défaut, le premier libre à partir de 8080. |
 | `--sans-tls` | Reste en HTTP, sans certificat. Pour un essai en réseau local. |
-| `--sans-pare-feu` | Ne touche pas à ufw, si le pare-feu est géré ailleurs. |
+| `--pare-feu` | Ouvre 80 et 443 dans ufw, **s'il est déjà actif**. Sans cette option, le pare-feu n'est pas touché. |
+| `--simulation` | Inventaire et plan seulement : aucune modification. |
 
 ### Mettre à jour
 
