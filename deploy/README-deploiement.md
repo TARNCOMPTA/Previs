@@ -95,6 +95,66 @@ sudo /etc/cron.daily/previs-sauvegarde  # essayer la sauvegarde à la main
 
 ---
 
+## Derrière un frontal en conteneur (Caddy, Traefik, nginx-proxy)
+
+Quand un conteneur tient déjà 80 et 443, installer avec `--sans-nginx`, puis brancher
+le renvoi. Trois points décident du bon fonctionnement.
+
+**1. Previs doit écouter là où le conteneur peut l'atteindre.** Pour un conteneur,
+`127.0.0.1` est sa propre boucle locale, pas celle de l'hôte. Il faut donc écouter sur
+une adresse visible depuis le réseau Docker :
+
+```bash
+sudo sed -i 's/^HOST=.*/HOST=0.0.0.0/' /opt/previs/.env
+sudo systemctl restart previs
+```
+
+Écouter sur la passerelle du réseau (`172.18.0.1`, par exemple) serait plus étroit,
+mais le service ne démarrerait plus si ce réseau était recréé avec un autre
+sous-réseau. `0.0.0.0` tient dans tous les cas, la fermeture venant du pare-feu.
+
+**2. Le pare-feu doit laisser passer le conteneur, et lui seul.** Un paquet venu d'un
+conteneur vers l'hôte traverse la chaîne INPUT : avec ufw en refus par défaut, il est
+rejeté sans règle explicite.
+
+```bash
+SOUS_RESEAU=$(sudo docker network inspect portail_default \
+  --format '{{range .IPAM.Config}}{{.Subnet}}{{end}}')
+sudo ufw allow from "$SOUS_RESEAU" to any port 8080 proto tcp comment 'frontal -> Previs'
+sudo ufw deny 8080/tcp comment 'Previs jamais joignable directement'
+```
+
+L'ordre compte : ufw applique la première règle qui correspond.
+
+**3. Le renvoi lui-même.** Pour Caddy, dans le `Caddyfile` :
+
+```
+previs.tarncompta.fr {
+	reverse_proxy 172.18.0.1:8080
+}
+```
+
+Caddy obtient le certificat seul, transmet `Host` tel que reçu et pose
+`X-Forwarded-Proto` : les trois réglages nécessaires sont acquis par défaut. Il n'impose
+pas non plus de délai de réponse, ce qui convient à l'export PDF.
+
+```bash
+sudo docker exec portail-caddy-1 caddy validate --config /etc/caddy/Caddyfile
+sudo docker exec portail-caddy-1 caddy reload  --config /etc/caddy/Caddyfile
+```
+
+`caddy reload` est gracieux : les autres sites ne sont pas interrompus. Valider avant
+de recharger, une configuration invalide faisant échouer le rechargement.
+
+**Enfin, la confiance accordée au frontal.** `TRUST_PROXY=loopback` ignorerait le
+`X-Forwarded-For` de Caddy, qui arrive depuis le sous-réseau Docker : la limitation des
+tentatives de connexion compterait alors tous les visiteurs sur une seule adresse.
+
+```bash
+sudo sed -i 's/^TRUST_PROXY=.*/TRUST_PROXY=loopback, uniquelocal/' /opt/previs/.env
+sudo systemctl restart previs
+```
+
 ## Procédure détaillée, étape par étape
 
 Ce qui suit décrit à la main ce que le script fait tout seul. À lire pour
