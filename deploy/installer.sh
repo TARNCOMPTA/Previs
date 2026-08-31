@@ -25,12 +25,17 @@ RACINE="${RACINE:-/opt/previs}"
 BOOTSTRAP_COURRIEL="${BOOTSTRAP_COURRIEL:-aymeric@tarncompta.fr}"
 NOM_VHOST="${NOM_VHOST:-previs}"
 ADOPTER_VHOST=0
+# Sur un serveur où un autre frontal — conteneur, Traefik, Caddy — tient 80 et 443,
+# Previs se contente de tourner sur son port ; le renvoi reste à l'exploitant.
+SANS_NGINX=0
 # Marque apposée dans les fichiers que ce script écrit : elle seule l'autorise à
 # les réécrire. Tout fichier qui ne la porte pas appartient à quelqu'un d'autre.
 MARQUE="# Généré par Previs — deploy/installer.sh. Ne pas modifier à la main."
 UTILISATEUR="previs"
 PORT_INTERNE="${PORT_INTERNE:-}"
-BRANCHE="${BRANCHE:-main}"
+# La branche extraite fait foi : viser « main » en dur échouait sur une copie posée
+# sur une branche de travail, et le script perdait alors sa mise à jour.
+BRANCHE="${BRANCHE:-}"
 SANS_TLS=0
 # Le pare-feu est en adhésion volontaire : l'activer sur un serveur qui héberge
 # d'autres services couperait tout ce qui n'écoute pas sur 22, 80 ou 443.
@@ -44,6 +49,7 @@ while [[ $# -gt 0 ]]; do
     --compte) BOOTSTRAP_COURRIEL="$2"; shift 2 ;;
     --nom-vhost) NOM_VHOST="$2"; shift 2 ;;
     --adopter-vhost) ADOPTER_VHOST=1; shift ;;
+    --sans-nginx) SANS_NGINX=1; SANS_TLS=1; shift ;;
     --branche) BRANCHE="$2"; shift 2 ;;
     --racine) RACINE="$2"; shift 2 ;;
     --port) PORT_INTERNE="$2"; shift 2 ;;
@@ -62,6 +68,14 @@ etape() { printf '\n\033[1;34m▸ %s\033[0m\n' "$*"; }
 ok()    { printf '  \033[32m✓\033[0m %s\n' "$*"; }
 avert() { printf '  \033[33m!\033[0m %s\n' "$*"; }
 mauvais() { printf '\n\033[1;31m✗ %s\033[0m\n' "$*" >&2; exit 1; }
+
+# Un obstacle arrête une exécution réelle, mais se contente de signaler en simulation :
+# un inventaire qui s'interrompt au premier problème ne montre pas les suivants.
+if [[ $SIMULATION -eq 1 ]]; then
+  obstacle() { avert "$@"; }
+else
+  obstacle() { mauvais "$@"; }
+fi
 
 # ─── Contrôles préalables ─────────────────────────────────────────────────────
 etape "Contrôles préalables"
@@ -85,15 +99,13 @@ fi
 # La résolution DNS conditionne l'émission du certificat : autant s'en assurer avant.
 # En simulation, rien n'est émis : un problème est signalé, il n'arrête pas l'inventaire.
 if [[ $SANS_TLS -eq 0 ]]; then
-  if [[ $SIMULATION -eq 1 ]]; then bloquant() { avert "$@"; }; else bloquant() { mauvais "$@"; }; fi
-
   IP_PUBLIQUE="$(curl -fsS --max-time 10 https://api.ipify.org 2>/dev/null || true)"
   IP_DOMAINE="$(getent ahostsv4 "$DOMAINE" 2>/dev/null | awk 'NR==1{print $1}' || true)"
   if [[ -z "$IP_DOMAINE" ]]; then
-    bloquant "$DOMAINE ne résout pas. Créer l'enregistrement A vers ce serveur, attendre la propagation, puis relancer.
+    obstacle "$DOMAINE ne résout pas. Créer l'enregistrement A vers ce serveur, attendre la propagation, puis relancer.
   Relancer sans certificat : $0 --sans-tls"
   elif [[ -n "$IP_PUBLIQUE" && "$IP_DOMAINE" != "$IP_PUBLIQUE" ]]; then
-    bloquant "$DOMAINE pointe vers $IP_DOMAINE, alors que ce serveur est en $IP_PUBLIQUE.
+    obstacle "$DOMAINE pointe vers $IP_DOMAINE, alors que ce serveur est en $IP_PUBLIQUE.
   Corriger l'enregistrement A avant de poursuivre — Let's Encrypt refuserait le certificat."
   else
     ok "$DOMAINE → $IP_DOMAINE (ce serveur)"
@@ -102,7 +114,7 @@ if [[ $SANS_TLS -eq 0 ]]; then
   # Le courriel ne sert qu'à l'émission du certificat : il n'est pas requis pour
   # dresser l'inventaire du serveur.
   if [[ -z "$COURRIEL" ]]; then
-    bloquant "L'adresse de notification Let's Encrypt est obligatoire : --courriel contact@tarncompta.fr"
+    obstacle "L'adresse de notification Let's Encrypt est obligatoire : --courriel contact@tarncompta.fr"
   fi
 fi
 
@@ -111,8 +123,15 @@ fi
 # ce qui existe et on choisit des réglages qui n'y touchent pas.
 etape "Ce qui tourne déjà sur ce serveur"
 
+NGINX_ACTIF=0
+systemctl is-active --quiet nginx 2>/dev/null && NGINX_ACTIF=1
+
 if command -v nginx >/dev/null; then
-  ok "nginx présent ($(nginx -v 2>&1 | sed 's#.*/##'))"
+  if [[ $NGINX_ACTIF -eq 1 ]]; then
+    ok "nginx en service ($(nginx -v 2>&1 | sed 's#.*/##'))"
+  else
+    avert "nginx installé ($(nginx -v 2>&1 | sed 's#.*/##')) mais son service n'est PAS actif"
+  fi
   HOTES="$(ls -1 /etc/nginx/sites-enabled/ 2>/dev/null | tr '\n' ' ' || true)"
   [[ -n "${HOTES// }" ]] && avert "Hôtes virtuels actifs, laissés intacts : $HOTES"
 else
@@ -209,11 +228,22 @@ else
 fi
 ok "Previs écoutera sur 127.0.0.1:$PORT_INTERNE, jamais exposé directement"
 
-# ─── Ce qui appartient déjà à quelqu'un d'autre ───────────────────────────────
-# Ces deux contrôles doivent figurer dans l'inventaire : une simulation ne servirait
-# à rien si elle affichait un plan vert pour une exécution qui s'arrête à mi-chemin.
-if [[ $SIMULATION -eq 1 ]]; then obstacle() { avert "$@"; }; else obstacle() { mauvais "$@"; }; fi
+# ─── Qui sert les ports publics ? ─────────────────────────────────────────────
+# Le paquet nginx peut être installé sans que son service tienne 80 et 443 : un
+# conteneur, Traefik ou Caddy peut les avoir pris. Toucher à nginx.service serait
+# alors inutile au mieux, et tenter de le démarrer échouerait sur un port déjà lié.
+if [[ $SANS_NGINX -eq 0 && $NGINX_ACTIF -eq 0 ]] && { port_occupe 80 || port_occupe 443; }; then
+  obstacle "Les ports publics sont occupés, mais nginx.service n'est pas actif : un autre serveur
+    frontal les tient — un conteneur Docker, Traefik, Caddy, Apache.
+    Identifier lequel :  sudo ss -ltnp | grep -E ':80 |:443 '
+    Le script ne peut ni recharger ni démarrer nginx dans cette situation. Installer Previs
+    seul, et brancher le renvoi vous-même sur votre frontal :
+                         $0 --sans-nginx …"
+fi
 
+# ─── Ce qui appartient déjà à quelqu'un d'autre ───────────────────────────────
+# Ces contrôles doivent figurer dans l'inventaire : une simulation ne servirait à rien
+# si elle affichait un plan vert pour une exécution qui s'arrête à mi-chemin.
 VHOST="/etc/nginx/sites-available/$NOM_VHOST"
 if [[ ! -f "$VHOST" ]] || grep -qF "$MARQUE" "$VHOST"; then
   ok "Hôte virtuel à écrire : $VHOST"
@@ -260,7 +290,11 @@ if [[ $SIMULATION -eq 1 ]]; then
   fi
   printf '   • créer le compte système « %s » et construire les quatre paquets\n' "$UTILISATEUR"
   printf '   • écrire /etc/systemd/system/previs.service et démarrer le service sur 127.0.0.1:%s\n' "$PORT_INTERNE"
-  printf '   • ajouter /etc/nginx/sites-available/%s pour %s — aucun autre hôte virtuel touché\n' "$NOM_VHOST" "$DOMAINE"
+  if [[ $SANS_NGINX -eq 1 ]]; then
+    printf '   • ne PAS toucher au serveur frontal — le renvoi vers 127.0.0.1:%s reste à faire\n' "$PORT_INTERNE"
+  else
+    printf '   • ajouter /etc/nginx/sites-available/%s pour %s — aucun autre hôte virtuel touché\n' "$NOM_VHOST" "$DOMAINE"
+  fi
   [[ $SANS_TLS -eq 0 ]] && printf '   • obtenir un certificat pour %s seulement\n' "$DOMAINE"
   if [[ $PARE_FEU -eq 1 ]]; then
     printf '   • ouvrir 80 et 443 dans ufw (sans activer le pare-feu s’il est inactif)\n'
@@ -357,6 +391,7 @@ etape "Code et construction"
 cd "$RACINE"
 if [[ -d .git ]]; then
   git config --global --add safe.directory "$RACINE" 2>/dev/null || true
+  [[ -n "$BRANCHE" ]] || BRANCHE="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)"
   git fetch --quiet origin "$BRANCHE" || avert "Impossible de contacter le dépôt distant, on garde la copie locale."
   if git rev-parse --verify --quiet "origin/$BRANCHE" >/dev/null; then
     git checkout --quiet "$BRANCHE" 2>/dev/null || git checkout --quiet -B "$BRANCHE" "origin/$BRANCHE"
@@ -528,6 +563,10 @@ if [[ $NOUVELLE_INSTALLATION -eq 1 ]]; then
 fi
 
 # ─── nginx et certificat ──────────────────────────────────────────────────────
+if [[ $SANS_NGINX -eq 1 ]]; then
+  etape "Serveur frontal"
+  ok "Non touché, sur demande (--sans-nginx). Previs écoute sur 127.0.0.1:$PORT_INTERNE."
+else
 etape "nginx"
 
 
@@ -557,7 +596,22 @@ server {
 CONFIG_VHOST
 ln -sf "$VHOST" "/etc/nginx/sites-enabled/$NOM_VHOST"
 nginx -t >/dev/null 2>&1 || mauvais "Configuration nginx invalide : nginx -t"
-systemctl reload nginx || systemctl start nginx
+
+# Recharger un nginx en service, démarrer un nginx arrêté seulement si les ports
+# publics sont libres. Forcer le démarrage échouerait, et surtout : un service
+# volontairement à l'arrêt ne se rallume pas à l'insu de l'exploitant.
+if [[ $NGINX_ACTIF -eq 1 ]]; then
+  systemctl reload nginx \
+    || mauvais "nginx a refusé de recharger sa configuration. Vos sites tournent toujours sur
+  l'ancienne. Diagnostiquer : sudo nginx -t && sudo journalctl -xeu nginx.service"
+elif port_occupe 80 || port_occupe 443; then
+  mauvais "nginx.service est à l'arrêt et les ports publics sont pris par autre chose.
+  L'hôte virtuel a été écrit mais n'est pas servi. Reprendre avec : $0 --sans-nginx …"
+else
+  systemctl enable --quiet nginx 2>/dev/null || true
+  systemctl start nginx \
+    || mauvais "nginx n'a pas démarré. Diagnostiquer : sudo journalctl -xeu nginx.service"
+fi
 ok "Hôte virtuel HTTP en place pour $DOMAINE"
 
 if [[ $SANS_TLS -eq 0 ]]; then
@@ -583,6 +637,7 @@ if [[ $SANS_TLS -eq 0 ]]; then
   ok "HTTPS actif, redirection du port 80 en place"
 
   systemctl enable --quiet certbot.timer 2>/dev/null || true
+fi
 fi
 
 # ─── Pare-feu ─────────────────────────────────────────────────────────────────
@@ -639,7 +694,10 @@ fi
 
 # ─── Vérification de bout en bout ─────────────────────────────────────────────
 etape "Vérification"
-BASE_PUBLIQUE="https://$DOMAINE"; [[ $SANS_TLS -eq 1 ]] && BASE_PUBLIQUE="http://$DOMAINE"
+BASE_PUBLIQUE="https://$DOMAINE"
+[[ $SANS_TLS -eq 1 ]] && BASE_PUBLIQUE="http://$DOMAINE"
+# Sans frontal, rien ne répond encore sur le domaine : on éprouve le service lui-même.
+[[ $SANS_NGINX -eq 1 ]] && BASE_PUBLIQUE="http://127.0.0.1:$PORT_INTERNE"
 
 curl -fsS --max-time 15 "$BASE_PUBLIQUE/api/sante" | grep -q operationnel \
   || mauvais "Le service ne répond pas sur $BASE_PUBLIQUE"
@@ -724,5 +782,20 @@ if [[ $NOUVELLE_INSTALLATION -eq 1 ]]; then
   printf '  Le changer à la première connexion, puis supprimer ce fichier.\033[0m\n'
 fi
 
-printf '\n  Prochaine étape : ouvrir %s, se connecter, puis renseigner\n' "$BASE_PUBLIQUE"
-printf '  Administration → Identité du cabinet (logo, SIRET, inscription à l’Ordre).\n\n'
+if [[ $SANS_NGINX -eq 1 ]]; then
+  printf '\n\033[1;33m  ── Reste à faire : le renvoi depuis votre serveur frontal ──\033[0m\n'
+  printf '  Previs écoute sur \033[1m127.0.0.1:%s\033[0m et n’est joignable que localement.\n' "$PORT_INTERNE"
+  printf '  Renvoyer %s vers ce port, en transmettant Host et X-Forwarded-Proto.\n\n' "$DOMAINE"
+  printf '  Un modèle nginx complet — export PDF, point MCP, mise en cache — est fourni :\n'
+  printf '    %s/deploy/nginx.previs.conf\n\n' "$RACINE"
+  printf '  Trois réglages comptent, quel que soit le frontal :\n'
+  printf '   • transmettre l’en-tête Host tel que reçu ; le contrôle d’origine s’appuie dessus\n'
+  printf '   • X-Forwarded-Proto https, sinon les cookies sécurisés ne seront pas posés\n'
+  printf '   • laisser 180 s à /api/dossiers/…/pdf : Chromium met une dizaine de secondes au\n'
+  printf '     premier appel après un redémarrage\n\n'
+  printf '  Puis, si le frontal termine le TLS, ajuster PUBLIC_URL dans %s/.env\n' "$RACINE"
+  printf '  et redémarrer :  sudo systemctl restart previs\n\n'
+else
+  printf '\n  Prochaine étape : ouvrir %s, se connecter, puis renseigner\n' "$BASE_PUBLIQUE"
+  printf '  Administration → Identité du cabinet (logo, SIRET, inscription à l’Ordre).\n\n'
+fi

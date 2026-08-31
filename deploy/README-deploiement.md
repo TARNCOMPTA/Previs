@@ -14,6 +14,7 @@ C'est le cas courant, et le script est fait pour. Ce qu'il ne fait **jamais** :
 | Occuper un port pris | Il lit les ports à l'écoute et en choisit un libre entre 8080 et 8092. Le port retenu est écrit dans `.env`, puis repris tel quel aux relances. |
 | Mettre à niveau des paquets | Seuls les paquets **manquants** sont installés. Un nginx en service n'est pas remplacé. |
 | Toucher aux certificats existants | Le certificat est demandé pour le seul domaine indiqué, par la méthode `webroot`. |
+| Démarrer un nginx que vous gardez à l'arrêt | Si `nginx.service` est inactif et que 80 ou 443 sont pris, c'est qu'un autre frontal les tient. Le script s'arrête et renvoie vers `--sans-nginx`. |
 
 Commencez toujours par une simulation : elle dresse l'inventaire du serveur et
 affiche le plan **sans rien modifier**.
@@ -59,6 +60,10 @@ Comptez cinq à dix minutes, l'essentiel étant la construction.
 | `--sans-tls` | Reste en HTTP, sans certificat. Pour un essai en réseau local. |
 | `--pare-feu` | Ouvre 80 et 443 dans ufw, **s'il est déjà actif**. Sans cette option, le pare-feu n'est pas touché. |
 | `--simulation` | Inventaire et plan seulement : aucune modification. |
+| `--sans-nginx` | N'installe que le service. À utiliser quand un autre frontal — conteneur, Traefik, Caddy — tient déjà 80 et 443 : le renvoi reste à votre main. |
+| `--nom-vhost` | Nom du fichier d'hôte virtuel, si `previs` est déjà pris. |
+| `--adopter-vhost` | Autorise la réécriture d'un hôte virtuel laissé par une exécution antérieure. |
+| `--compte` | Adresse du premier compte administrateur. |
 
 ### Mettre à jour
 
