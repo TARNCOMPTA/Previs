@@ -4,7 +4,9 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { creerServeurMcp } from '@previs/mcp';
 import { ouvrirBase } from '../src/base.js';
 import { DepotSqlite } from '../src/depot.js';
-import type { Auteur } from '@previs/core';
+import { ENTETE_JETON, type Auteur } from '@previs/core';
+import { construireApplication } from '../src/index.js';
+import type { Configuration } from '../src/config.js';
 
 /**
  * Cohabitation de l'assistant et du clavier, par le chemin MCP réel.
@@ -167,5 +169,172 @@ describe('l’assistant n’écrase pas une saisie faite au clavier', () => {
     const apres = await depot.lire(dossierId);
     expect(apres!.dossier.identite.raisonSociale).toBe('Boulangerie');
     expect('versionAttendue' in (apres!.dossier.identite as Record<string, unknown>)).toBe(false);
+  });
+});
+
+/**
+ * Le plafond d'exports PDF, éprouvé par le vrai point d'entrée HTTP.
+ *
+ * L'outil « generer_pdf » lance un Chromium complet — huit cents millisecondes mesurées —
+ * et le protocole MCP ne plafonne rien de lui-même. La route `POST /api/dossiers/:id/pdf`
+ * comptait ses appels depuis toujours ; ce chemin-ci ne comptait rien, et un porteur de
+ * jeton pouvait boucler l'outil jusqu'à saturer le processeur du serveur.
+ *
+ * Chromium est remplacé par un compteur : ce qui est éprouvé ici est le plafond, non le
+ * rendu, et trente rendus réels coûteraient une demi-minute d'essais.
+ */
+describe('l’export PDF de l’assistant est plafonné', () => {
+  const ORIGINE = 'https://previs.tarncompta.fr';
+  const MOT_DE_PASSE = 'motdepasse-de-test-2026';
+  const PLAFOND = 30;
+
+  const config = {
+    port: 0,
+    host: '127.0.0.1',
+    urlPublique: ORIGINE,
+    secretSession: 'secret-d-essai-suffisamment-long-pour-le-test',
+    cheminBase: ':memory:',
+    cheminStatique: '/chemin/qui-n-existe-pas',
+    cheminChromium: '/usr/bin/chromium',
+    cookiesSecurises: true,
+    confianceProxy: 'loopback',
+    niveauJournal: 'silent',
+    mcpHttpActif: true,
+    production: true,
+    bootstrap: { email: '', motDePasse: '', nom: '' },
+  } as Configuration;
+
+  async function monter() {
+    const e = await construireApplication(config);
+    let rendus = 0;
+    // La substitution porte sur l'instance : `bornerExportPdf` la prend pour prototype et
+    // appelle bien celle-ci, comme le fait la route HTTP.
+    (e.depot as unknown as { pdf: () => Promise<Uint8Array> }).pdf = async () => {
+      rendus += 1;
+      return new Uint8Array([37]);
+    };
+
+    const utilisateur = await e.auth.creerUtilisateur({
+      email: 'assistant@tarncompta.fr',
+      nom: 'Aymeric HANGARD',
+      motDePasse: MOT_DE_PASSE,
+      role: 'admin',
+    });
+    const session = await e.app.inject({
+      method: 'POST',
+      url: '/api/auth/connexion',
+      payload: { email: 'assistant@tarncompta.fr', motDePasse: MOT_DE_PASSE },
+    });
+    const brut = session.headers['set-cookie'];
+    const cookie = (Array.isArray(brut) ? brut[0] : (brut ?? '')).split(';')[0];
+    const jetonApi = (
+      await e.app.inject({
+        method: 'POST',
+        url: '/api/jetons',
+        headers: { cookie, origin: ORIGINE },
+        payload: { libelle: 'Assistant', validiteJours: 1 },
+      })
+    ).json().jeton as string;
+
+    const cree = await e.depot.creer(
+      { nom: 'Essai', modele: 'IS' },
+      { id: utilisateur.id, nom: 'Aymeric HANGARD', origine: 'interface' },
+    );
+
+    const parMcp = () =>
+      e.app.inject({
+        method: 'POST',
+        url: '/mcp',
+        headers: {
+          [ENTETE_JETON]: jetonApi,
+          'content-type': 'application/json',
+          accept: 'application/json, text/event-stream',
+        },
+        payload: {
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'tools/call',
+          params: {
+            name: 'generer_pdf',
+            arguments: { dossierId: cree.id, ignorerControles: true },
+          },
+        },
+      });
+
+    const parRouteHttp = () =>
+      e.app.inject({
+        method: 'POST',
+        url: `/api/dossiers/${cree.id}/pdf`,
+        headers: { [ENTETE_JETON]: jetonApi },
+      });
+
+    return {
+      e,
+      parMcp,
+      parRouteHttp,
+      rendus: () => rendus,
+      fermer: async () => {
+        await e.app.close();
+        e.base.close();
+      },
+    };
+  }
+
+  /** Le corps de la réponse arrive en flux d'événements : on en extrait le JSON. */
+  function resultatMcp(corps: string): { text: string; isError: boolean } {
+    const ligne = corps.split('\n').find((l) => l.startsWith('data:'));
+    const charge = JSON.parse((ligne ?? '').slice(5)) as {
+      result?: { content?: Array<{ text?: string }>; isError?: boolean };
+    };
+    const resultat = charge.result ?? {};
+    return {
+      text: (resultat.content ?? []).map((c) => c.text ?? '').join('\n'),
+      isError: Boolean(resultat.isError),
+    };
+  }
+
+  it('le trente-et-unième appel est refusé, sans avoir lancé Chromium', async () => {
+    const s = await monter();
+    try {
+      for (let i = 0; i < PLAFOND; i++) {
+        const r = resultatMcp((await s.parMcp()).body);
+        expect(r.isError, `appel ${i + 1}`).toBe(false);
+      }
+      expect(s.rendus()).toBe(PLAFOND);
+
+      const refuse = resultatMcp((await s.parMcp()).body);
+      expect(refuse.isError).toBe(true);
+      expect(refuse.text).toMatch(/Trop d’exports PDF/);
+      // Le refus intervient AVANT le rendu : le compteur n'a pas bougé.
+      expect(s.rendus()).toBe(PLAFOND);
+    } finally {
+      await s.fermer();
+    }
+  });
+
+  it('le budget est unique : l’assistant épuise aussi celui de la route HTTP', async () => {
+    const s = await monter();
+    try {
+      for (let i = 0; i < PLAFOND; i++) await s.parMcp();
+      const parRoute = await s.parRouteHttp();
+      expect(parRoute.statusCode).toBe(429);
+      expect(s.rendus()).toBe(PLAFOND);
+    } finally {
+      await s.fermer();
+    }
+  });
+
+  it('et réciproquement : la route HTTP épuise celui de l’assistant', async () => {
+    const s = await monter();
+    try {
+      for (let i = 0; i < PLAFOND; i++) {
+        expect((await s.parRouteHttp()).statusCode, `appel ${i + 1}`).toBe(200);
+      }
+      const refuse = resultatMcp((await s.parMcp()).body);
+      expect(refuse.isError).toBe(true);
+      expect(s.rendus()).toBe(PLAFOND);
+    } finally {
+      await s.fermer();
+    }
   });
 });

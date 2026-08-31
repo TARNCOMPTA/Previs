@@ -50,6 +50,13 @@ interface Contexte {
   oauth: ServiceOauth;
   cles: ServiceClesAcces;
   config: Configuration;
+  /**
+   * Compteur d'exports PDF, partagé avec le point d'entrée MCP.
+   *
+   * Il vient du dehors précisément pour cela : l'outil « generer_pdf » lance le même
+   * Chromium que cette route, et doit puiser dans le même budget.
+   */
+  debitPdf: LimiteurDebit;
 }
 
 /** Convertit une erreur métier du dépôt en réponse HTTP conforme au contrat. */
@@ -149,8 +156,6 @@ export function enregistrerRoutes(app: FastifyInstance, ctx: Contexte): void {
   // Le second est plus large, pour qu'un tiers ne puisse pas bloquer un collaborateur.
   const parAdresse = new LimiteurConnexions(10, 15 * 60 * 1000);
   const parCompte = new LimiteurConnexions(20, 60 * 60 * 1000);
-  // Un export lance un rendu Chromium : trente par quart d'heure et par compte.
-  const debitPdf = new LimiteurDebit(30, 15 * 60 * 1000);
   // Les deux points d'entrée publics des clés d'accès : plafond par adresse, sur le
   // modèle du flux OAuth, pour qu'un anonyme ne puisse ni gonfler la table des défis
   // ni faire tourner la vérification en boucle.
@@ -616,7 +621,7 @@ export function enregistrerRoutes(app: FastifyInstance, ctx: Contexte): void {
   app.post('/api/dossiers/:id/pdf', async (requete, reponse) => {
     const identite = identifier(ctx.auth, requete);
     if (!exiger(identite, reponse)) return;
-    if (!debitPdf.autoriser(identite.utilisateur.id)) {
+    if (!ctx.debitPdf.autoriser(identite.utilisateur.id)) {
       return reponse.code(429).send({
         erreur: 'Trop d’exports demandés. Patienter quelques minutes.',
         code: 'interdit',

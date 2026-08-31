@@ -98,7 +98,7 @@ npm run dev            # serveur sur :8080, interface sur :5173
 Autres commandes :
 
 ```bash
-npm test               # 70 essais du moteur et du modèle, 132 essais du serveur
+npm test               # 75 essais du moteur et du modèle, 219 essais du serveur
 npm run typecheck      # TypeScript strict sur les quatre paquets
 npm run build          # construit les quatre paquets
 ```

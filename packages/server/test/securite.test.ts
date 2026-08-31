@@ -3,7 +3,9 @@ import { ENTETE_JETON } from '@previs/core';
 import type { FastifyInstance } from 'fastify';
 import { construireApplication, type Application } from '../src/index.js';
 import type { Configuration } from '../src/config.js';
-import { empreinteJeton, LimiteurConnexions } from '../src/securite.js';
+import { empreinteJeton, LimiteurConnexions, LimiteurDebit } from '../src/securite.js';
+import { bornerExportPdf } from '../src/mcpHttp.js';
+import { avecDelai, FileImpressions } from '../src/pdf/file.js';
 
 /**
  * Essais de sécurité de l'API.
@@ -526,5 +528,157 @@ describe('le jeton d’API par « Authorization: Bearer »', () => {
       });
       expect(r.statusCode, valeur || '(aucun)').toBe(401);
     }
+  });
+});
+
+describe('l’export PDF est plafonné sur les deux canaux', () => {
+  /** Un dépôt factice : seule `pdf` compte ici, et elle ne lance pas Chromium. */
+  function depotFactice() {
+    const appels: string[] = [];
+    const faux = {
+      appels,
+      async pdf(id: string) {
+        appels.push(id);
+        return new Uint8Array([1, 2, 3]);
+      },
+      async lire(id: string) {
+        return { id } as never;
+      },
+    };
+    return faux;
+  }
+
+  it('l’outil MCP puise dans le même compteur que la route HTTP', async () => {
+    const debit = new LimiteurDebit(3, 60_000);
+    const brut = depotFactice();
+    const borne = bornerExportPdf(brut as never, () => debit.autoriser('utl_1'));
+
+    await borne.pdf('dos_1');
+    await borne.pdf('dos_1');
+    await borne.pdf('dos_1');
+    expect(brut.appels).toHaveLength(3);
+
+    // Le quatrième dépasse le plafond : refusé avant d'atteindre Chromium.
+    await expect(borne.pdf('dos_1')).rejects.toThrow(/Trop d’exports PDF/);
+    expect(brut.appels).toHaveLength(3);
+
+    // Et le compteur est bien celui de la route : elle n'a plus rien à donner non plus.
+    expect(debit.autoriser('utl_1')).toBe(false);
+  });
+
+  it('le refus porte le code « interdit », pas une erreur interne', async () => {
+    const borne = bornerExportPdf(depotFactice() as never, () => false);
+    await expect(borne.pdf('dos_1')).rejects.toMatchObject({
+      name: 'ErreurDepot',
+      code: 'interdit',
+    });
+  });
+
+  it('le plafond est par titulaire : un compte n’épuise pas celui d’un autre', async () => {
+    const debit = new LimiteurDebit(1, 60_000);
+    const premier = bornerExportPdf(depotFactice() as never, () => debit.autoriser('utl_1'));
+    const second = bornerExportPdf(depotFactice() as never, () => debit.autoriser('utl_2'));
+
+    await premier.pdf('dos_1');
+    await expect(premier.pdf('dos_1')).rejects.toThrow();
+    await expect(second.pdf('dos_1')).resolves.toBeInstanceOf(Uint8Array);
+  });
+
+  it('tout le reste du dépôt passe sans être recopié', async () => {
+    const brut = depotFactice();
+    const borne = bornerExportPdf(brut as never, () => true);
+    // `lire` n'est pas redéfinie : elle doit rester atteignable par le prototype, sans
+    // quoi le serveur MCP perdrait une méthode à chaque ajout au dépôt.
+    await expect(borne.lire('dos_7')).resolves.toEqual({ id: 'dos_7' });
+  });
+});
+
+describe('la file d’impression borne Chromium', () => {
+  it('ne laisse jamais passer plus que le plafond, même sur un passage de main', async () => {
+    const file = new FileImpressions(2, 12);
+    await file.prendre();
+    await file.prendre();
+    expect(file.occupees).toBe(2);
+
+    // Trois demandes en attente derrière les deux jetons.
+    const attentes = [file.prendre(), file.prendre(), file.prendre()];
+    await Promise.resolve();
+    expect(file.enFile).toBe(3);
+
+    /*
+     * Le point exact que la première version manquait : rendre un jeton réveille le
+     * premier de la file par une micro-tâche. Un appelant qui se présente dans cet
+     * intervalle ne doit PAS trouver de place libre — sinon trois Chromium tournent là
+     * où le plafond en promet deux.
+     */
+    file.rendre();
+    const intrus = file.prendre();
+    let intrusServi = false;
+    void intrus.then(() => {
+      intrusServi = true;
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(file.occupees).toBe(2);
+    expect(intrusServi).toBe(false);
+
+    // Puis tout se déroule dans l'ordre, sans jamais dépasser deux.
+    for (let i = 0; i < 4; i++) {
+      file.rendre();
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(file.occupees).toBeLessThanOrEqual(2);
+    }
+    await Promise.all([...attentes, intrus]);
+  });
+
+  it('refuse au-delà de la file d’attente plutôt que de faire patienter sans fin', async () => {
+    const file = new FileImpressions(1, 2);
+    await file.prendre();
+    const attentes = [file.prendre(), file.prendre()];
+    await Promise.resolve();
+    await expect(file.prendre()).rejects.toThrow(/Trop d’exports simultanés/);
+
+    file.rendre();
+    file.rendre();
+    file.rendre();
+    await Promise.all(attentes);
+  });
+
+  it('rend son jeton quand l’impression échoue', async () => {
+    const file = new FileImpressions(1, 2);
+    // C'est le « finally » de genererPdf qui rend le jeton ; on en reproduit le contrat.
+    try {
+      await file.prendre();
+      throw new Error('Chromium a refusé');
+    } catch {
+      file.rendre();
+    }
+    expect(file.occupees).toBe(0);
+    await expect(file.prendre()).resolves.toBeUndefined();
+  });
+});
+
+describe('le délai d’impression', () => {
+  it('abandonne une impression qui ne rend jamais la main', async () => {
+    const jamais = new Promise<Uint8Array>(() => undefined);
+    await expect(avecDelai(jamais, 20)).rejects.toThrow(/dépassé 0 secondes|dépassé \d+ seconde/);
+  });
+
+  it('laisse passer une impression qui aboutit à temps', async () => {
+    const vite = Promise.resolve(new Uint8Array([1]));
+    await expect(avecDelai(vite, 1000)).resolves.toBeInstanceOf(Uint8Array);
+  });
+
+  it('n’abat pas le processus quand la promesse abandonnée rejette ensuite', async () => {
+    let rejeter: (e: Error) => void = () => undefined;
+    const tardive = new Promise<Uint8Array>((_, r) => {
+      rejeter = r;
+    });
+    await expect(avecDelai(tardive, 20)).rejects.toThrow();
+    // Le rejet arrive après l'abandon : sans le « catch » vide d'avecDelai, c'est un
+    // « unhandledRejection », et le service tombe.
+    rejeter(new Error('Chromium fermé'));
+    await new Promise((r) => setTimeout(r, 10));
   });
 });

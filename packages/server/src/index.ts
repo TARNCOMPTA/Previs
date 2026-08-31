@@ -8,14 +8,14 @@ import { ServiceAuthentification } from './auth.js';
 import { journaliser, ouvrirBase, purgerSessions, type BaseDonnees } from './base.js';
 import { ServiceCabinet } from './cabinet.js';
 import { ServiceClesAcces } from './cles.js';
-import { eprouverSortiePdf } from './pdf/index.js';
 import { chargerConfiguration, type Configuration } from './config.js';
 import { DepotSqlite } from './depot.js';
 import { monterMcpHttp } from './mcpHttp.js';
 import { ServiceOauth } from './oauth.js';
 import { enregistrerRoutesOauth } from './oauthRoutes.js';
-import { fermerNavigateur } from './pdf/index.js';
+import { eprouverSortiePdf, fermerNavigateur } from './pdf/index.js';
 import { enregistrerRoutes } from './routes.js';
+import { LimiteurDebit } from './securite.js';
 
 export interface Application {
   app: import('fastify').FastifyInstance;
@@ -46,15 +46,27 @@ export async function construireApplication(config: Configuration): Promise<Appl
 
   ajouterEntetesSecurite(app, config);
 
+  // Un export lance un rendu Chromium : trente par quart d'heure et par compte. Le
+  // compteur est créé ici, et non dans les routes, parce qu'il doit être le MÊME pour la
+  // route HTTP et pour l'outil MCP « generer_pdf ». Deux compteurs séparés offriraient au
+  // porteur d'un jeton deux budgets au lieu d'un.
+  const debitPdf = new LimiteurDebit(30, 15 * 60 * 1000);
+
   // Un dossier volumineux pèse une cinquantaine de kilo-octets et ses états calculés
   // le double : la compression divise ces échanges par dix sur une liaison lente.
   await app.register(compression, { global: true, threshold: 1024, encodings: ['br', 'gzip', 'deflate'] });
   await app.register(cookie, { secret: config.secretSession });
-  enregistrerRoutes(app, { base, auth, depot, cabinet, oauth, cles, config });
+  enregistrerRoutes(app, { base, auth, depot, cabinet, oauth, cles, config, debitPdf });
   await enregistrerRoutesOauth(app, { base, auth, oauth, cabinet, config });
 
   if (config.mcpHttpActif) {
-    await monterMcpHttp(app, { auth, depot, oauth, urlPublique: config.urlPublique });
+    await monterMcpHttp(app, {
+      auth,
+      depot,
+      oauth,
+      debitPdf,
+      urlPublique: config.urlPublique,
+    });
   }
 
   // ─── Interface construite ───────────────────────────────────────────────────

@@ -42,6 +42,7 @@ server/src/oauth.ts      serveur d'autorisation OAuth 2.1 du point d'entrée MCP
 server/src/oauthRoutes.ts découverte, consentement, jetons, révocation
 server/src/cles.ts       clés d'accès WebAuthn : cérémonies, défis, vérification
 server/src/pdf/          document HTML imprimé par Chromium, charte pourpre
+server/src/pdf/file.ts   plafond d'impressions simultanées, délai d'impression
 server/src/pdf/polices/  les six woff2 incorporées, et leur générateur
 mcp/src/outils.ts        les quinze outils exposés à l'assistant
 web/src/store/dossier.ts état, recalcul, enregistrement différé, synchronisation
@@ -86,8 +87,14 @@ manquante.
 
 ### Le troisième point délicat : ce que le PDF ne peut pas faire
 
-Chromium imprime le dossier **sans aucun accès réseau**. Trois conséquences qui ne se
-devinent pas :
+Chromium imprime le dossier **sans aucun accès réseau** : chaque requête de la page est
+avortée par `contexte.route('**/*', …)`, dans `pdf/index.ts`. Les drapeaux de lancement n'y
+sont pour rien — `--disable-background-networking` ne coupe que les services d'arrière-plan
+du navigateur, jamais les requêtes du document. La différence se constate :
+`test/reseau-pdf.verification.ts`, lancée à la main, montre un serveur témoin touché deux
+fois sans interception et zéro fois avec.
+
+Trois conséquences qui ne se devinent pas :
 
 1. **Les polices sont incorporées en base64** (`pdf/polices.ts`, engendré par
    `polices/engendrer.mjs`). Une police appelée depuis le réseau ne serait jamais chargée.
@@ -108,6 +115,19 @@ devinent pas :
 
 `packages/server/test/pdf.test.ts` verrouille ces points sur trois régimes et un à dix
 exercices : parité des cellules, caractères absents des polices, trous de gabarit.
+
+Deux plafonds encadrent enfin l'impression, dans `pdf/file.ts` : **deux Chromium à la fois**
+au plus, douze demandes en attente, et **soixante secondes** par impression. Un export
+coûte 160 Mo de pointe et 480 ms mesurés ; sans plafond, les trente que la limitation de
+débit autorise par quart d'heure pouvaient partir ensemble et réclamer cinq gigaoctets. Le
+jeton est **transmis** au premier de la file, jamais rendu puis repris : décrémenter d'abord
+laissait le compteur sous le plafond le temps d'une micro-tâche, et trois Chromium
+tournaient là où le plafond en promettait deux.
+
+Et le budget d'exports est **unique par titulaire, quel que soit le canal** : le compteur
+naît dans `index.ts` et sert à la fois la route `POST /api/dossiers/:id/pdf` et l'outil MCP
+« generer_pdf », que `mcpHttp.ts` enveloppe pour cela (`bornerExportPdf`). Deux compteurs
+séparés offriraient au porteur d'un jeton deux budgets au lieu d'un.
 
 ### Le logo n'est pas une donnée du dossier
 
@@ -135,7 +155,7 @@ premier démarrage, tout le reste vient de l'écran Administration.
 
 ```bash
 npm run typecheck      # les quatre paquets
-npm test               # 70 essais du moteur et du modèle, 198 essais du serveur
+npm test               # 75 essais du moteur et du modèle, 219 essais du serveur
 npm run build
 ```
 
@@ -147,6 +167,11 @@ Les essais de l'API (`packages/server/test/`) passent par `app.inject()` : ni po
 ouvert, ni Chromium lancé, base en mémoire. Ceux du PDF non plus ne lancent Chromium :
 `construireHtml()` est pure, et c'est elle qui porte tout ce qui peut être faux dans les
 chiffres. La mise en page, elle, se regarde — voir ci-dessous.
+
+Un fichier de `test/` dont le nom porte `.verification.ts` au lieu de `.test.ts` n'est pas
+dans la suite : il est typé mais lancé à la main, parce qu'il exige Chromium. Il n'y en a
+qu'un, `reseau-pdf.verification.ts`, et il éprouve une propriété qui ne s'observe pas
+autrement.
 
 Pour une modification de l'interface, la lancer réellement : `npm run dev`, puis
 parcourir les écrans touchés. Un typecheck qui passe ne prouve pas qu'un écran
