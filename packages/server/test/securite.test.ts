@@ -367,3 +367,64 @@ describe('erreurs', () => {
     expect(reponse.json().code).toBe('donnees_invalides');
   });
 });
+
+describe('le jeton d’API par « Authorization: Bearer »', () => {
+  it('authentifie comme l’en-tête propre au logiciel', async () => {
+    const parEnTetePropre = await app.inject({
+      method: 'GET',
+      url: '/api/dossiers',
+      headers: { [ENTETE_JETON]: jetonAdmin },
+    });
+    const parBearer = await app.inject({
+      method: 'GET',
+      url: '/api/dossiers',
+      headers: { authorization: `Bearer ${jetonAdmin}` },
+    });
+    expect(parEnTetePropre.statusCode).toBe(200);
+    expect(parBearer.statusCode).toBe(200);
+  });
+
+  it('la casse et les espaces du préfixe sont tolérés', async () => {
+    for (const valeur of [`bearer ${jetonAdmin}`, `BEARER  ${jetonAdmin}`, `Bearer ${jetonAdmin} `]) {
+      const r = await app.inject({
+        method: 'GET',
+        url: '/api/dossiers',
+        headers: { authorization: valeur },
+      });
+      expect(r.statusCode, valeur).toBe(200);
+    }
+  });
+
+  it('dispense du contrôle d’origine, comme l’en-tête propre', async () => {
+    const reponse = await app.inject({
+      method: 'POST',
+      url: '/api/dossiers',
+      headers: {
+        authorization: `Bearer ${jetonAdmin}`,
+        origin: 'https://site-malveillant.example',
+      },
+      payload: { nom: 'Dossier par Bearer', modele: 'vide' },
+    });
+    expect(reponse.statusCode).toBe(200);
+  });
+
+  it('n’ouvre pas davantage l’administration que l’autre en-tête', async () => {
+    const reponse = await app.inject({
+      method: 'GET',
+      url: '/api/utilisateurs',
+      headers: { authorization: `Bearer ${jetonAdmin}` },
+    });
+    expect(reponse.statusCode).toBe(403);
+  });
+
+  it('un jeton inventé et un en-tête mal formé sont refusés', async () => {
+    for (const valeur of ['Bearer previs_inexistant', 'Basic abcdef', 'Bearer', ''] as const) {
+      const r = await app.inject({
+        method: 'GET',
+        url: '/api/dossiers',
+        headers: valeur ? { authorization: valeur } : {},
+      });
+      expect(r.statusCode, valeur || '(aucun)').toBe(401);
+    }
+  });
+});

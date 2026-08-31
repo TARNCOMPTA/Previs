@@ -110,16 +110,31 @@ binaire n'est pas dans `/usr/bin/chromium`.
 ## Brancher l'assistant
 
 Créez un jeton dans **Administration → Jetons d'API**. Il n'est affiché qu'une
-seule fois : seule son empreinte SHA-256 est conservée.
+seule fois : seule son empreinte SHA-256 est conservée. C'est la seule clé nécessaire —
+il n'y a ni identifiant ni secret de client, le logiciel n'utilise pas OAuth.
 
-En HTTP, sur `/mcp`, avec l'en-tête `x-previs-token`. Ou en processus local :
+### Par HTTP — un connecteur, rien à installer
+
+| Réglage | Valeur |
+|---|---|
+| Adresse du serveur | `https://previs.tarncompta.fr/mcp` |
+| Authentification | `Authorization: Bearer previs_…` |
+
+L'en-tête propre au logiciel, `x-previs-token`, est accepté de façon équivalente : les
+clients qui permettent d'ajouter un en-tête arbitraire peuvent l'employer. Aucune autre
+forme n'est reconnue — pas de jeton dans l'URL, qui figurerait dans les journaux.
+
+### Par processus local — quand le client ne sait pas parler HTTP
+
+Le serveur MCP autonome ne détient aucune donnée : il dialogue avec l'API par HTTP.
+Il n'est pas publié sur npm, il faut donc une copie du dépôt sur la machine.
 
 ```json
 {
   "mcpServers": {
     "previs": {
       "command": "node",
-      "args": ["/opt/previs/packages/mcp/dist/stdio.js"],
+      "args": ["/chemin/vers/previs/packages/mcp/dist/stdio.js"],
       "env": {
         "PREVIS_URL": "https://previs.tarncompta.fr",
         "PREVIS_TOKEN": "previs_…"

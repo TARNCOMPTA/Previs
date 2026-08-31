@@ -184,13 +184,38 @@ export class ServiceAuthentification {
   }
 }
 
+/**
+ * Extrait le jeton d'API d'une requête, par l'un ou l'autre en-tête.
+ *
+ * `x-previs-token` est l'en-tête propre au logiciel ; `Authorization: Bearer` est
+ * celui que savent envoyer les clients MCP génériques et les formulaires de
+ * connecteur, qui ne permettent pas d'ajouter un en-tête arbitraire. Les deux offrent
+ * la même protection contre les requêtes intersites : une page tierce ne peut poser
+ * ni l'un ni l'autre sans un contrôle préalable que le serveur n'accorde pas.
+ */
+export function jetonDeRequete(requete: FastifyRequest): string | null {
+  const propre = requete.headers[ENTETE_JETON];
+  const direct = Array.isArray(propre) ? propre[0] : propre;
+  if (direct) return direct;
+
+  const autorisation = requete.headers.authorization;
+  const brut = Array.isArray(autorisation) ? autorisation[0] : autorisation;
+  if (!brut) return null;
+  const correspondance = /^Bearer[ ]+(.+)$/i.exec(brut.trim());
+  return correspondance ? correspondance[1].trim() : null;
+}
+
+/** Vrai si la requête porte un jeton, quel que soit l'en-tête employé. */
+export function porteUnJeton(requete: FastifyRequest): boolean {
+  return jetonDeRequete(requete) !== null;
+}
+
 /** Résout l'identité d'une requête, par jeton d'API en priorité puis par session. */
 export function identifier(
   service: ServiceAuthentification,
   requete: FastifyRequest,
 ): Identite | null {
-  const entete = requete.headers[ENTETE_JETON];
-  const jeton = Array.isArray(entete) ? entete[0] : entete;
+  const jeton = jetonDeRequete(requete);
   if (jeton) {
     const utilisateur = service.parJeton(jeton);
     return utilisateur ? { utilisateur, origine: 'mcp' } : null;

@@ -15,7 +15,14 @@ import {
 import '@fastify/cookie';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { auteurDe, exiger, identifier, NOM_COOKIE, type ServiceAuthentification } from './auth.js';
+import {
+  auteurDe,
+  exiger,
+  identifier,
+  NOM_COOKIE,
+  porteUnJeton,
+  type ServiceAuthentification,
+} from './auth.js';
 import { journaliser, type BaseDonnees } from './base.js';
 import { verifierLogo, type ServiceCabinet } from './cabinet.js';
 import type { DepotSqlite } from './depot.js';
@@ -101,7 +108,9 @@ function verifierOrigine(app: FastifyInstance, config: Configuration): void {
 
   app.addHook('onRequest', async (requete, reponse) => {
     if (METHODES_SURES.has(requete.method)) return;
-    if (requete.headers[ENTETE_JETON]) return;
+    // Dispensés : ni « x-previs-token » ni « Authorization » ne peuvent être posés
+    // par une page tierce sans un contrôle préalable que le serveur n'accorde pas.
+    if (porteUnJeton(requete)) return;
 
     const cookies = (requete as typeof requete & { cookies?: Record<string, string> }).cookies;
     if (!cookies?.[NOM_COOKIE]) return;
