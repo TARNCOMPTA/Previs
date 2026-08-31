@@ -213,3 +213,94 @@ describe('coût du calcul', () => {
     ).toBeLessThan(2.5);
   });
 });
+
+/**
+ * Ce que devient une répartition mensuelle quand le prévisionnel s'allonge.
+ *
+ * `ajusterSeries()` complète les tableaux « par exercice » — c'est l'objet des essais
+ * ci-dessus — mais il ne touche pas la matrice d'une répartition mensuelle : trois lignes
+ * restent trois lignes. Et `totauxAnnuelsDepuisRepartition()` fait primer le mensuel sur
+ * l'annuel. Une charge portée de trois à cinq exercices rendait donc ZÉRO sur les deux
+ * nouveaux, quel que soit le montant saisi dans la grille.
+ *
+ * C'est le versant « chiffre qui s'évapore » de la première règle du projet : la charge
+ * disparaissait du compte de résultat, de la trésorerie, du bilan et du PDF remis au
+ * banquier, et l'écart de bilan restait nul — zéro est parfaitement cohérent.
+ */
+describe('une répartition mensuelle survit à l’allongement du prévisionnel', () => {
+  function loyerMensuel(nbExercices: number, montants: number[], lignesMatrice: number) {
+    const base = dossierComplet('IS');
+    const ligne = completerLigne('charges.lignes', {
+      id: 'loyer',
+      libelle: 'Loyer du local',
+      montants,
+      repartition: {
+        type: 'mensuel',
+        montants: Array.from({ length: lignesMatrice }, () =>
+          Array.from({ length: 12 }, () => 1000),
+        ),
+      },
+    });
+    return ajusterSeries({
+      ...base,
+      parametres: { ...base.parametres, nbExercices },
+      charges: { ...base.charges, lignes: [ligne] },
+    } as typeof base);
+  }
+
+  /** Les totaux annuels de la seule ligne qui nous intéresse, et non ceux de la section. */
+  function totauxDuLoyer(d: ReturnType<typeof loyerMensuel>): number[] {
+    return calculer(d).charges.detail.find((l) => l.ligneId === 'loyer')!.montants;
+  }
+
+  it('le montant annuel est repris là où aucune grille mensuelle n’existe', () => {
+    const totaux = totauxDuLoyer(loyerMensuel(5, [12000, 12000, 12000, 13000, 13000], 3));
+    expect(totaux[3], 'exercice 4').toBe(13000);
+    expect(totaux[4], 'exercice 5').toBe(13000);
+    // Et les trois premiers exercices restent gouvernés par leur grille mensuelle.
+    expect(totaux[0]).toBe(12000);
+  });
+
+  it('la trésorerie porte le même montant, réparti sur les mois de l’exercice', () => {
+    const d = loyerMensuel(5, [12000, 12000, 12000, 13000, 13000], 3);
+    const r = calculer(d);
+    const detail = r.charges.detail.find((l) => l.ligneId === 'loyer')!;
+    const exercice4 = r.exercices[3];
+    const mois = detail.mensuel.slice(
+      exercice4.moisDebutAbsolu,
+      exercice4.moisDebutAbsolu + exercice4.nbMois,
+    );
+    expect(mois.reduce((t, v) => t + v, 0)).toBeCloseTo(13000, 2);
+  });
+
+  it('une grille mensuelle toute à zéro reste un zéro voulu', () => {
+    const base = dossierComplet('IS');
+    const ligne = completerLigne('charges.lignes', {
+      id: 'loyer',
+      libelle: 'Loyer du local',
+      montants: [12000, 12000, 12000],
+      repartition: {
+        type: 'mensuel',
+        // Le troisième exercice est explicitement à zéro : local rendu, plus de loyer.
+        montants: [
+          Array.from({ length: 12 }, () => 1000),
+          Array.from({ length: 12 }, () => 1000),
+          Array.from({ length: 12 }, () => 0),
+        ],
+      },
+    });
+    const r = calculer(
+      ajusterSeries({ ...base, charges: { ...base.charges, lignes: [ligne] } } as typeof base),
+    );
+    expect(r.charges.detail.find((l) => l.ligneId === 'loyer')!.montants[2]).toBe(0);
+  });
+
+  it('et le bilan reste équilibré dans tous les cas', () => {
+    for (const nb of [3, 5, 8]) {
+      const d = loyerMensuel(nb, Array.from({ length: nb }, () => 12000), 3);
+      for (const b of calculer(d).bilans) {
+        expect(Math.abs(b.ecart), `${nb} exercices`).toBeLessThanOrEqual(1);
+      }
+    }
+  });
+});

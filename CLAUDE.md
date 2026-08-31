@@ -153,7 +153,12 @@ JSON versionné, et celui du cabinet dans la table `cabinet`. Deux raisons : res
 une version antérieure ne doit pas faire disparaître un logo, et l'archiver à chaque
 écriture recopierait la même image dans tout l'historique. Un logo déposé est vérifié
 sur ses octets, pas sur le type déclaré ; le SVG est refusé — c'est un document XML,
-pas une image inerte.
+pas une image inerte. Ses **dimensions** sont lues dans son en-tête et plafonnées à 4 000
+pixels de côté : le plafond du contrat porte sur le poids, et le poids ne dit rien de la
+surface. Un PNG en niveaux de gris de 20 000 × 20 000 pixels, entièrement conforme, tient
+en 380 Ko et faisait passer l'export de 576 ms à 29 166 — mesuré. Le logo étant persistant,
+il empoisonnait ensuite tous les exports du dossier, et sur le logo du cabinet, de tous les
+dossiers.
 
 Rien de l'identité du cabinet n'est écrit en dur : `CABINET_PAR_DEFAUT` ne sert qu'au
 premier démarrage, tout le reste vient de l'écran Administration.
@@ -172,7 +177,7 @@ premier démarrage, tout le reste vient de l'écran Administration.
 
 ```bash
 npm run typecheck      # les quatre paquets
-npm test               # 77 essais du moteur, 241 du serveur, 11 du magasin de l'interface
+npm test               # 81 essais du moteur, 246 du serveur, 11 du magasin de l'interface
 npm run build
 ```
 

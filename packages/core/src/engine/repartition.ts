@@ -44,7 +44,11 @@ export function repartirSurExercice(
     }
 
     case 'mensuel': {
-      const ligne = repartition.montants[exercice.index] ?? [];
+      const ligne = repartition.montants[exercice.index];
+      // Aucune grille mensuelle pour cet exercice : le montant annuel saisi est la seule
+      // information dont on dispose, et il se répartit comme une ligne ordinaire. Voir
+      // `totauxAnnuelsDepuisRepartition` pour le pourquoi.
+      if (!ligne || ligne.length === 0) return repartirEgal(montant, n);
       return Array.from({ length: n }, (_, i) => euro(ligne[i] ?? 0));
     }
   }
@@ -72,6 +76,20 @@ export function repartirSurCalendrier(
 /**
  * Quand la répartition est `mensuel`, les montants mensuels saisis priment sur les
  * montants annuels : cette fonction recalcule les totaux annuels correspondants.
+ *
+ * Mais seulement là où une grille mensuelle EXISTE. Un exercice sans grille reprend le
+ * montant annuel, et ce détail-ci est un chiffre client :
+ *
+ * `ajusterSeries()` complète les tableaux « par exercice » quand le prévisionnel s'allonge,
+ * mais il ne touche pas la matrice d'une répartition mensuelle — trois lignes restent trois
+ * lignes. Sans la reprise ci-dessous, une charge portée de trois à cinq exercices rendait
+ * ZÉRO sur les deux nouveaux, quel que soit le montant annuel saisi dans la grille. La
+ * charge disparaissait du compte de résultat, de la trésorerie, du bilan et du PDF remis au
+ * banquier — et l'écart de bilan restait nul, zéro étant parfaitement cohérent. Un chiffre
+ * qui s'évapore vaut un chiffre inventé.
+ *
+ * Une ligne PRÉSENTE mais toute à zéro reste un zéro voulu : c'est une saisie, pas une
+ * absence.
  */
 export function totauxAnnuelsDepuisRepartition(
   montantsParExercice: readonly number[],
@@ -82,7 +100,8 @@ export function totauxAnnuelsDepuisRepartition(
     return exercices.map((e) => montantsParExercice[e.index] ?? 0);
   }
   return exercices.map((e) => {
-    const ligne = repartition.montants[e.index] ?? [];
+    const ligne = repartition.montants[e.index];
+    if (!ligne || ligne.length === 0) return montantsParExercice[e.index] ?? 0;
     let t = 0;
     for (let i = 0; i < e.nbMois; i++) t += ligne[i] ?? 0;
     return euro(t);
