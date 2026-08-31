@@ -269,7 +269,9 @@ else
                    $0 --nom-vhost previs-financier …"
 fi
 
-AUTRE="$(grep -rlE "^[[:space:]]*server_name([[:space:]]|.*[[:space:]])$DOMAINE[[:space:];]" \
+# -R et non -r : sites-enabled ne contient que des liens symboliques, que -r n'ouvre pas.
+# Le contrôle ne détectait donc jamais rien.
+AUTRE="$(grep -RlE "^[[:space:]]*server_name([[:space:]]|.*[[:space:]])$DOMAINE[[:space:];]" \
   /etc/nginx/sites-enabled/ 2>/dev/null | grep -v "/$NOM_VHOST\$" | tr '\n' ' ' || true)"
 if [[ -n "${AUTRE// }" ]]; then
   obstacle "$DOMAINE est déjà servi par un autre hôte virtuel : $AUTRE
