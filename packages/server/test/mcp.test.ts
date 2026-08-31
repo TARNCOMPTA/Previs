@@ -338,3 +338,70 @@ describe('l’export PDF de l’assistant est plafonné', () => {
     }
   });
 });
+
+/**
+ * L'historique du dossier : ce que l'assistant écrit doit rester restaurable.
+ *
+ * Le regroupement de versions a été écrit pour l'enregistrement différé du navigateur —
+ * huit cents millisecondes après la dernière frappe, commentaire identique — afin que
+ * l'historique reflète des séances de travail plutôt que des frappes. Mais rien n'excluait
+ * l'assistant, dont les commentaires se répètent à l'identique : ses écritures successives
+ * s'effaçaient les unes les autres.
+ *
+ * C'est le filet de sécurité du travail à deux que décrit le projet. Si l'assistant se
+ * trompe au deuxième lot et corrige au quatrième, il faut pouvoir revenir au troisième.
+ */
+describe('les versions écrites par l’assistant sont toutes conservées', () => {
+  let depotSeul: DepotSqlite;
+  let dossierIdSeul: string;
+
+  beforeEach(async () => {
+    depotSeul = new DepotSqlite(ouvrirBase(':memory:'));
+    const cree = await depotSeul.creer({ nom: 'Historique', modele: 'IS' }, ASSISTANT);
+    dossierIdSeul = cree.id;
+  });
+
+  it('quatre lots successifs laissent quatre points de retour', async () => {
+    for (let i = 1; i <= 4; i++) {
+      await depotSeul.appliquer(
+        dossierIdSeul,
+        {
+          operations: [
+            { action: 'ajouter_ligne', liste: 'recettes.lignes', ligne: { libelle: `Activité ${i}` } },
+          ],
+          // Le commentaire que forge réellement la surface MCP, et qui se répète.
+          commentaire: 'Ajout de 1 ligne(s) dans recettes.lignes',
+        },
+        ASSISTANT,
+      );
+    }
+
+    const versions = await depotSeul.versions(dossierIdSeul);
+    // Création, puis un lot par appel : cinq entrées, aucune effacée.
+    expect(versions.map((v) => v.version)).toEqual([5, 4, 3, 2, 1]);
+
+    // Et chacune est réellement restaurable : c'est ce que le regroupement retirait.
+    for (const version of [2, 3, 4]) {
+      const archive = await depotSeul.lireVersion(dossierIdSeul, version);
+      expect(archive, `version ${version}`).not.toBeNull();
+      expect(archive!.dossier.recettes.lignes.some((l) => l.libelle === `Activité ${version - 1}`)).toBe(
+        true,
+      );
+    }
+  });
+
+  it('mais la saisie au clavier se regroupe toujours', async () => {
+    for (let i = 1; i <= 4; i++) {
+      const actuel = await depotSeul.lire(dossierIdSeul);
+      await depotSeul.enregistrer(
+        dossierIdSeul,
+        { dossier: actuel!.dossier, commentaire: 'Saisie', versionAttendue: actuel!.version },
+        CLAVIER,
+      );
+    }
+    const versions = await depotSeul.versions(dossierIdSeul);
+    // La création, puis une seule entrée pour toute la séance de frappe.
+    expect(versions).toHaveLength(2);
+    expect(versions[0].version).toBe(5);
+  });
+});

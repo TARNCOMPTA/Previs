@@ -602,7 +602,7 @@ export function enregistrerRoutes(app: FastifyInstance, ctx: Contexte): void {
     if (!exiger(identite, reponse, { ecriture: true })) return;
     try {
       const { id } = requete.params as { id: string };
-      await ctx.depot.supprimer(id);
+      await ctx.depot.supprimer(id, auteurDe(identite));
       return { supprime: true };
     } catch (erreur) {
       return repondreErreur(erreur, reponse, ctx.config.production);

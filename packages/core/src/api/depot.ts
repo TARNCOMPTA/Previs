@@ -35,7 +35,15 @@ export interface DepotDossiers {
   creer(requete: RequeteCreation, auteur: Auteur): Promise<DossierEnregistre>;
   enregistrer(id: string, requete: RequeteEnregistrement, auteur: Auteur): Promise<DossierEnregistre>;
   appliquer(id: string, requete: RequetePatch, auteur: Auteur): Promise<ResultatPatch>;
-  supprimer(id: string): Promise<void>;
+  /**
+   * Supprime un dossier client, et son historique avec lui.
+   *
+   * L'auteur est exigé : c'est la seule opération irréversible du dépôt, et elle
+   * n'inscrivait qu'un nom d'utilisateur vide dans le journal — la suppression du dossier
+   * d'un client était donc la seule action qu'aucune enquête ne pouvait rattacher à
+   * quelqu'un.
+   */
+  supprimer(id: string, auteur: Auteur): Promise<void>;
   dupliquer(id: string, auteur: Auteur): Promise<DossierEnregistre>;
   versions(id: string): Promise<ResumeVersion[]>;
   lireVersion(id: string, version: number): Promise<DossierEnregistre | null>;

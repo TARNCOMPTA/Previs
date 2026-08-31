@@ -162,8 +162,22 @@ function ajouterEntetesSecurite(app: import('fastify').FastifyInstance, config: 
     ? 'max-age=31536000; includeSubDomains'
     : '';
 
-  app.addHook('onSend', async (_requete, reponse, charge) => {
+  app.addHook('onSend', async (requete, reponse, charge) => {
     if (hsts) reponse.header('strict-transport-security', hsts);
+
+    /*
+     * Rien de ce que sert l'API ne doit être conservé nulle part.
+     *
+     * Un dossier prévisionnel porte le chiffre d'affaires, la masse salariale et la
+     * trésorerie d'un client réel. Sans cet en-tête, un mandataire d'entreprise, un cache
+     * de navigateur partagé ou le disque d'un poste emprunté en gardent une copie que rien
+     * ne réclame ensuite. Le contenu statique de l'interface, lui, garde ses en-têtes :
+     * ses fichiers portent une empreinte et ne contiennent aucune donnée de client.
+     */
+    if (requete.url.startsWith('/api/')) {
+      reponse.header('cache-control', 'no-store, private');
+      reponse.header('pragma', 'no-cache');
+    }
     // L'écran de consentement OAuth pose la sienne, plus étroite, mais qui doit
     // autoriser la soumission du formulaire vers l'adresse de retour du client :
     // ne pas l'écraser.

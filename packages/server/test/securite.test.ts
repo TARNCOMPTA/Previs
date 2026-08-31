@@ -919,3 +919,66 @@ describe('la liste des dossiers ne porte pas les logos', () => {
     expect(complet.json().aUnLogo).toBe(true);
   });
 });
+
+describe('rien de ce que sert l’API n’est mis en cache', () => {
+  /*
+   * Un dossier prévisionnel porte le chiffre d'affaires, la masse salariale et la
+   * trésorerie d'un client réel. Sans « cache-control: no-store », un mandataire
+   * d'entreprise, un cache partagé ou le disque d'un poste emprunté en gardent une copie
+   * que rien ne réclame ensuite.
+   */
+  it('les routes de données portent « no-store »', async () => {
+    for (const url of ['/api/dossiers', '/api/sante', '/api/cabinet']) {
+      const r = await app.inject({ method: 'GET', url, headers: { [ENTETE_JETON]: jetonAdmin } });
+      expect(r.headers['cache-control'], url).toBe('no-store, private');
+    }
+  });
+
+  it('y compris la réponse qui porte le dossier lui-même', async () => {
+    const cree = await app.inject({
+      method: 'POST',
+      url: '/api/dossiers',
+      headers: { [ENTETE_JETON]: jetonAdmin },
+      payload: { nom: 'Sans cache', modele: 'IS' },
+    });
+    const r = await app.inject({
+      method: 'GET',
+      url: `/api/dossiers/${cree.json().id}`,
+      headers: { [ENTETE_JETON]: jetonAdmin },
+    });
+    expect(r.headers['cache-control']).toBe('no-store, private');
+  });
+});
+
+describe('la suppression d’un dossier client laisse une trace nominative', () => {
+  /*
+   * C'est la seule opération irréversible du dépôt, et elle inscrivait un nom
+   * d'utilisateur VIDE dans le journal : la suppression du dossier d'un client était la
+   * seule action qu'aucune enquête ne pouvait rattacher à quelqu'un.
+   */
+  it('le journal nomme qui a supprimé, et par quel canal', async () => {
+    const cree = await app.inject({
+      method: 'POST',
+      url: '/api/dossiers',
+      headers: { [ENTETE_JETON]: jetonAdmin },
+      payload: { nom: 'À supprimer', modele: 'IS' },
+    });
+    const id = cree.json().id as string;
+    const r = await app.inject({
+      method: 'DELETE',
+      url: `/api/dossiers/${id}`,
+      headers: { [ENTETE_JETON]: jetonAdmin },
+    });
+    expect(r.statusCode).toBe(200);
+
+    const trace = application.base
+      .prepare(
+        "SELECT utilisateur, origine, detail FROM journal_audit WHERE action = 'suppression_dossier' AND cible = ?",
+      )
+      .get(id) as { utilisateur: string; origine: string; detail: string } | undefined;
+    expect(trace).toBeTruthy();
+    expect(trace!.utilisateur).toBe('Administrateur');
+    expect(trace!.origine).toBe('mcp');
+    expect(trace!.detail).toBe('À supprimer');
+  });
+});

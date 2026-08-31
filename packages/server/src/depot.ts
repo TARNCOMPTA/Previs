@@ -142,8 +142,19 @@ export class DepotSqlite implements DepotDossiers {
    */
   private readonly cabinet: ServiceCabinet;
 
+  /**
+   * Exécute une suite de requêtes en une seule transaction.
+   *
+   * Préparée une fois : `base.transaction()` compile son BEGIN et son COMMIT à la
+   * construction. Rien de ce qui lui est passé ne doit contenir d'`await` —
+   * better-sqlite3 le refuse, et c'est la garantie qu'une transaction ne reste jamais
+   * ouverte pendant un aller-retour.
+   */
+  private readonly enBloc: (travail: () => void) => void;
+
   constructor(private readonly base: BaseDonnees) {
     this.cabinet = new ServiceCabinet(base);
+    this.enBloc = base.transaction((travail: () => void) => travail());
   }
 
   async lister(): Promise<ResumeDossier[]> {
@@ -185,35 +196,40 @@ export class DepotSqlite implements DepotDossiers {
     const maintenant = new Date().toISOString();
     const info = indicateurs(dossier);
 
-    this.base
-      .prepare(
-        `INSERT INTO dossiers (id, nom, contenu, version, client, regime, type_dossier,
-           nb_exercices, annee_debut, ca_premier_exercice, coherent, cree_le, modifie_le, modifie_par)
-         VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        id,
-        requete.nom,
-        JSON.stringify(dossier),
-        dossier.identite.raisonSociale,
-        dossier.identite.regime,
-        dossier.identite.typeDossier,
-        dossier.parametres.nbExercices,
-        info.anneeDebut,
-        info.caPremierExercice,
-        info.coherent ? 1 : 0,
-        maintenant,
-        maintenant,
-        auteur.nom,
-      );
+    // Comme `ecrire()` : le dossier, sa première version et l'entrée de journal partent
+    // ensemble ou pas du tout. Un dossier créé sans sa version 1 n'aurait aucun point de
+    // retour, et rien ne le signalerait.
+    this.enBloc(() => {
+      this.base
+        .prepare(
+          `INSERT INTO dossiers (id, nom, contenu, version, client, regime, type_dossier,
+             nb_exercices, annee_debut, ca_premier_exercice, coherent, cree_le, modifie_le, modifie_par)
+           VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          id,
+          requete.nom,
+          JSON.stringify(dossier),
+          dossier.identite.raisonSociale,
+          dossier.identite.regime,
+          dossier.identite.typeDossier,
+          dossier.parametres.nbExercices,
+          info.anneeDebut,
+          info.caPremierExercice,
+          info.coherent ? 1 : 0,
+          maintenant,
+          maintenant,
+          auteur.nom,
+        );
 
-    this.enregistrerVersion(id, 1, dossier, auteur, 'Création du dossier');
-    journaliser(this.base, {
-      utilisateur: auteur.nom,
-      origine: auteur.origine,
-      action: 'creation_dossier',
-      cible: id,
-      detail: requete.nom,
+      this.enregistrerVersion(id, 1, dossier, auteur, 'Création du dossier');
+      journaliser(this.base, {
+        utilisateur: auteur.nom,
+        origine: auteur.origine,
+        action: 'creation_dossier',
+        cible: id,
+        detail: requete.nom,
+      });
     });
 
     return versEnregistre(this.lireOuEchouer(id));
@@ -260,15 +276,19 @@ export class DepotSqlite implements DepotDossiers {
     return versEnregistre(this.lireOuEchouer(id));
   }
 
-  async supprimer(id: string): Promise<void> {
+  async supprimer(id: string, auteur: Auteur): Promise<void> {
     const ligne = this.lireOuEchouer(id);
-    this.base.prepare('DELETE FROM dossiers WHERE id = ?').run(id);
-    journaliser(this.base, {
-      utilisateur: '',
-      origine: 'interface',
-      action: 'suppression_dossier',
-      cible: id,
-      detail: ligne.nom,
+    // La suppression et sa trace partent ensemble : une suppression non journalisée est
+    // exactement ce qu'on ne veut pas laisser possible.
+    this.enBloc(() => {
+      this.base.prepare('DELETE FROM dossiers WHERE id = ?').run(id);
+      journaliser(this.base, {
+        utilisateur: auteur.nom,
+        origine: auteur.origine,
+        action: 'suppression_dossier',
+        cible: id,
+        detail: ligne.nom,
+      });
     });
   }
 
@@ -383,37 +403,55 @@ export class DepotSqlite implements DepotDossiers {
 
     const version = ligne.version + 1;
     const maintenant = new Date().toISOString();
+    // `calculer()` reste HORS de la transaction : l'y mettre la tiendrait ouverte
+    // pendant tout le calcul, pour rien.
     const info = indicateurs(dossier);
 
-    this.base
-      .prepare(
-        `UPDATE dossiers SET contenu = ?, version = ?, client = ?, regime = ?, type_dossier = ?,
-           nb_exercices = ?, annee_debut = ?, ca_premier_exercice = ?, coherent = ?,
-           modifie_le = ?, modifie_par = ?
-         WHERE id = ?`,
-      )
-      .run(
-        JSON.stringify(dossier),
-        version,
-        dossier.identite.raisonSociale,
-        dossier.identite.regime,
-        dossier.identite.typeDossier,
-        dossier.parametres.nbExercices,
-        info.anneeDebut,
-        info.caPremierExercice,
-        info.coherent ? 1 : 0,
-        maintenant,
-        auteur.nom,
-        ligne.id,
-      );
+    /*
+     * Une écriture est une transaction, et ne l'était pas.
+     *
+     * Elle compte huit requêtes, dont un DELETE de la version regroupée SUIVI de l'INSERT
+     * qui la remplace. Une interruption entre les deux — SIGKILL, manque de mémoire, disque
+     * plein — effaçait l'archive sans écrire la nouvelle ; une interruption entre l'UPDATE
+     * du dossier et l'INSERT de sa version laissait la ligne à la version N+1 sans archive
+     * correspondante, et un trou définitif dans l'historique.
+     *
+     * Le gain de vitesse est nul et n'est pas le motif : mesuré, sept INSERT de 52 Ko
+     * coûtent 2,55 ms en transactions implicites contre 2,63 ms groupés — « synchronous »
+     * vaut NORMAL en mode WAL, donc aucun commit ne provoque de synchronisation disque.
+     * C'est une question de cohérence, pas de performance.
+     */
+    this.enBloc(() => {
+      this.base
+        .prepare(
+          `UPDATE dossiers SET contenu = ?, version = ?, client = ?, regime = ?, type_dossier = ?,
+             nb_exercices = ?, annee_debut = ?, ca_premier_exercice = ?, coherent = ?,
+             modifie_le = ?, modifie_par = ?
+           WHERE id = ?`,
+        )
+        .run(
+          JSON.stringify(dossier),
+          version,
+          dossier.identite.raisonSociale,
+          dossier.identite.regime,
+          dossier.identite.typeDossier,
+          dossier.parametres.nbExercices,
+          info.anneeDebut,
+          info.caPremierExercice,
+          info.coherent ? 1 : 0,
+          maintenant,
+          auteur.nom,
+          ligne.id,
+        );
 
-    this.enregistrerVersion(ligne.id, version, dossier, auteur, commentaire);
-    journaliser(this.base, {
-      utilisateur: auteur.nom,
-      origine: auteur.origine,
-      action: 'modification_dossier',
-      cible: ligne.id,
-      detail: info.erreur ? `${commentaire} — échec du calcul : ${info.erreur}` : commentaire,
+      this.enregistrerVersion(ligne.id, version, dossier, auteur, commentaire);
+      journaliser(this.base, {
+        utilisateur: auteur.nom,
+        origine: auteur.origine,
+        action: 'modification_dossier',
+        cible: ligne.id,
+        detail: info.erreur ? `${commentaire} — échec du calcul : ${info.erreur}` : commentaire,
+      });
     });
 
     return versEnregistre(this.lireOuEchouer(ligne.id));
@@ -427,6 +465,18 @@ export class DepotSqlite implements DepotDossiers {
    * séances de travail plutôt que des frappes au clavier, et cesse de croître sans
    * borne pendant une saisie. Une écriture portant un autre commentaire, une
    * restauration ou une intervention de l'assistant ouvrent toujours une entrée neuve.
+   *
+   * **Le regroupement ne vaut que pour l'interface**, et cette condition-là manquait :
+   * elle est ce qui rend vraie la phrase ci-dessus. Les commentaires forgés par la surface
+   * MCP se répètent à l'identique — « Ajout de N ligne(s) dans recettes.lignes » — si bien
+   * que quatre appels successifs de l'assistant, mesurés, ne laissaient que deux versions
+   * archivées sur cinq. Corriger au quatrième lot une erreur du deuxième ne laissait alors
+   * plus d'autre point de retour que la création du dossier. Le regroupement a été écrit
+   * pour l'enregistrement différé du navigateur, et pour lui seul.
+   *
+   * À savoir : `auth.ts` estampille « mcp » toute écriture par jeton d'API, pas seulement
+   * celles du serveur MCP. Un client par jeton ne bénéficie donc pas non plus du
+   * regroupement — ce qui est voulu, il n'enregistre pas à la frappe.
    */
   private enregistrerVersion(
     id: string,
@@ -447,6 +497,7 @@ export class DepotSqlite implements DepotDossiers {
       | undefined;
 
     const regroupable =
+      auteur.origine === 'interface' &&
       derniere !== undefined &&
       derniere.auteur === auteur.nom &&
       derniere.origine === auteur.origine &&

@@ -36,7 +36,7 @@ core/src/model/          les cinq sections, l'identité, les paramètres,
 core/src/engine/         immobilisations, emprunts, flux, fiscal, états,
                          contrôles, et index.ts qui orchestre le tout
 core/src/api/            contrat HTTP partagé et opérations atomiques
-server/src/depot.ts      persistance, versions, verrouillage optimiste
+server/src/depot.ts      persistance, versions, verrouillage optimiste, transactions
 server/src/cabinet.ts    identité du cabinet et contrôle des logos déposés
 server/src/oauth.ts      serveur d'autorisation OAuth 2.1 du point d'entrée MCP
 server/src/oauthRoutes.ts découverte, consentement, jetons, révocation
@@ -172,7 +172,7 @@ premier démarrage, tout le reste vient de l'écran Administration.
 
 ```bash
 npm run typecheck      # les quatre paquets
-npm test               # 77 essais du moteur, 232 du serveur, 11 du magasin de l'interface
+npm test               # 77 essais du moteur, 241 du serveur, 11 du magasin de l'interface
 npm run build
 ```
 
@@ -251,7 +251,7 @@ connexion par adresse **et** par compte. Ne jamais consigner un mot de passe, un
 jeton en clair ou le contenu d'un dossier dans les journaux. Le serveur refuse de
 démarrer en production sans `SESSION_SECRET`.
 
-Neuf règles à ne pas défaire :
+Dix règles à ne pas défaire :
 
 1. **Un chemin d'opération est borné.** `resoudreChemin()` n'accepte que les sept
    sections du dossier, refuse `__proto__`, `prototype` et `constructor`, et ne
@@ -298,7 +298,15 @@ Neuf règles à ne pas défaire :
    d'événements bloquée, sur une adresse dont le compteur répondait déjà 429. Rapport de
    1026 pour 1, dans un processus mono-fil. Les trois routes qui portent un dossier ont leur
    propre plafond, à deux mégaoctets.
-9. **L'ampleur d'un dossier est bornée dans son ensemble, à l'écriture seulement.**
+9. **Une écriture est une transaction, et l'historique de l'assistant ne se regroupe pas.**
+   `ecrire()`, `creer()` et `supprimer()` passent par `enBloc` : une interruption entre
+   l'UPDATE du dossier et l'archivage de sa version laissait un trou définitif dans
+   l'historique, et une suppression pouvait partir sans sa trace. Le gain de vitesse est nul
+   — c'est la cohérence qui est en jeu. Le regroupement de versions, lui, exige
+   `auteur.origine === 'interface'` : les commentaires forgés par la surface MCP se
+   répètent, si bien que quatre lots de l'assistant ne laissaient que deux versions sur cinq
+   et que corriger au quatrième une erreur du deuxième n'avait plus de point de retour.
+10. **L'ampleur d'un dossier est bornée dans son ensemble, à l'écriture seulement.**
    `LIGNES_MAX` est posé par LISTE, et il y a douze listes : à lui seul il laissait passer un
    dossier de vingt mégaoctets dont chaque plafond documenté était pourtant respecté.
    `verifierAmpleurDossier()` est appelée depuis `ecrire()` et `creer()`, jamais à la
