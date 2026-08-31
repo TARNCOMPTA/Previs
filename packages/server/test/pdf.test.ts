@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { calculer, type Dossier, type Resultats } from '@previs/core';
 import { dossierComplet } from '../../core/test/aide.js';
 import { construireHtml, construirePied } from '../src/pdf/document.js';
+import { REGLES_POLICES, REGLES_POLICES_PIED } from '../src/pdf/polices.js';
 
 /**
  * Le document imprimé.
@@ -14,8 +15,10 @@ import { construireHtml, construirePied } from '../src/pdf/document.js';
  *   cellules que son en-tête a de colonnes. C'est la garantie qu'aucun tableau ne glisse,
  *   pour un à dix exercices comme pour les trois régimes.
  * - **les caractères absents des polices.** U+202F et deux signes décoratifs ne sont dans
- *   aucune des six faces incorporées : écrits tels quels ils partiraient en repli sur une
+ *   aucune des huit faces incorporées : écrits tels quels ils partiraient en repli sur une
  *   police du système, et la colonne des montants cesserait d'être alignée.
+ * - **aucune face variable.** Chromium ne sait pas incorporer une police variable dans un
+ *   PDF : il en dessine chaque glyphe en Type3. Le contrôle porte sur les octets.
  * - **les trous du gabarit.** « NaN », « undefined » et « [object Object] » sont ce qu'un
  *   gabarit produit quand une donnée manque. Aucun ne doit atteindre le papier.
  * - **le découpage mensuel.** L'annexe de trésorerie couvre exactement les mois de chaque
@@ -271,5 +274,113 @@ describe('le document imprimé', () => {
       expect(pied).not.toContain('<b>x');
       expect(pied).toContain('&lt;b&gt;');
     });
+  });
+});
+
+/**
+ * Les tables d'un fichier woff2, telles que Chromium les verra.
+ *
+ * L'annuaire de tables d'un woff2 n'est pas celui d'un sfnt : chaque entrée commence par un
+ * octet de drapeaux dont les six bits bas désignent une table de la liste ci-dessous, et les
+ * longueurs sont en UIntBase128 de taille variable. Il faut donc parcourir l'annuaire entier
+ * pour connaître les noms — mais rien n'est à décompresser, l'annuaire précède le flux
+ * Brotli.
+ */
+const TAGS_WOFF2 = [
+  'cmap', 'head', 'hhea', 'hmtx', 'maxp', 'name', 'OS/2', 'post', 'cvt ', 'fpgm', 'glyf',
+  'loca', 'prep', 'CFF ', 'VORG', 'EBDT', 'EBLC', 'gasp', 'hdmx', 'kern', 'LTSH', 'PCLT',
+  'VDMX', 'vhea', 'vmtx', 'BASE', 'GDEF', 'GPOS', 'GSUB', 'EBSC', 'JSTF', 'MATH', 'CBDT',
+  'CBLC', 'COLR', 'CPAL', 'SVG ', 'sbix', 'acnt', 'avar', 'bdat', 'bloc', 'bsln', 'cvar',
+  'fdsc', 'feat', 'fmtx', 'fvar', 'gvar', 'hsty', 'just', 'lcar', 'mort', 'morx', 'opbd',
+  'prop', 'trak', 'Zapf', 'Silf', 'Glat', 'Gloc', 'Feat', 'Sill',
+];
+
+function tablesWoff2(octets: Buffer): string[] {
+  expect(octets.subarray(0, 4).toString('latin1'), 'signature woff2').toBe('wOF2');
+  const nombre = octets.readUInt16BE(12);
+  let i = 48;
+  const base128 = (): void => {
+    for (let k = 0; k < 5; k++) if (!(octets[i++] & 0x80)) return;
+    throw new Error('UIntBase128 mal formé');
+  };
+  const tables: string[] = [];
+  for (let t = 0; t < nombre; t++) {
+    const drapeaux = octets[i++];
+    const index = drapeaux & 0x3f;
+    let tag: string;
+    if (index === 63) {
+      tag = octets.subarray(i, i + 4).toString('latin1');
+      i += 4;
+    } else {
+      tag = TAGS_WOFF2[index] ?? `?${index}`;
+    }
+    tables.push(tag);
+    base128(); // origLength
+    // La longueur transformée n'est présente que si la table l'est : version 0 pour glyf
+    // et loca, version non nulle pour les autres.
+    const version = drapeaux >> 6;
+    const transformee = tag === 'glyf' || tag === 'loca' ? version === 0 : version !== 0;
+    if (transformee) base128();
+  }
+  return tables;
+}
+
+/** Les faces incorporées, extraites des règles @font-face telles qu'elles sont servies. */
+function facesIncorporees(regles: string): Buffer[] {
+  const faces = [...regles.matchAll(/data:font\/woff2;base64,([A-Za-z0-9+/=]+)\)/g)].map((m) =>
+    Buffer.from(m[1], 'base64'),
+  );
+  expect(faces.length, 'aucune face trouvée dans les règles').toBeGreaterThan(0);
+  return faces;
+}
+
+describe('les polices incorporées', () => {
+  /*
+   * Le défaut que l'audit a relevé, et qui ne se voit qu'à la taille du document : Hanken
+   * Grotesk était le fichier variable d'origine, et Chromium, incapable de l'incorporer, en
+   * dessinait chaque glyphe en Type3 — une procédure de tracé par caractère. Le dossier
+   * pesait 337 Ko au lieu de 162, avec quinze polices Type3 là où il en faut sept.
+   *
+   * Le contrôle porte sur les octets, non sur le nom du fichier ni sur la graisse déclarée :
+   * c'est « fvar » qui fait une police variable, et c'est lui que Chromium regarde.
+   */
+  it('aucune n’est variable', () => {
+    for (const [nom, regles] of [
+      ['document', REGLES_POLICES],
+      ['pied de page', REGLES_POLICES_PIED],
+    ] as const) {
+      for (const [rang, octets] of facesIncorporees(regles).entries()) {
+        const tables = tablesWoff2(octets);
+        for (const variable of ['fvar', 'gvar', 'avar', 'HVAR', 'MVAR']) {
+          expect(tables, `${nom}, face ${rang + 1} : table « ${variable} »`).not.toContain(variable);
+        }
+      }
+    }
+  });
+
+  it('les huit faces du document portent les tables d’une police complète', () => {
+    const faces = facesIncorporees(REGLES_POLICES);
+    expect(faces).toHaveLength(8);
+    for (const [rang, octets] of faces.entries()) {
+      const tables = tablesWoff2(octets);
+      for (const exigee of ['cmap', 'head', 'hhea', 'hmtx', 'maxp', 'name', 'OS/2', 'glyf']) {
+        expect(tables, `face ${rang + 1} : table « ${exigee} »`).toContain(exigee);
+      }
+    }
+  });
+
+  /*
+   * Le gabarit de pied de page est réinterprété par Chromium à chaque page : il n'y reprend
+   * que les deux faces qu'il emploie réellement — le texte en graisse 400 et les chiffres
+   * moyens. Y verser les huit multiplierait par cinq le poids d'un gabarit relu vingt-six
+   * fois.
+   */
+  it('le pied de page n’en reprend que deux', () => {
+    const faces = facesIncorporees(REGLES_POLICES_PIED);
+    expect(faces).toHaveLength(2);
+    const poids = faces.reduce((somme, f) => somme + f.length, 0);
+    expect(poids, `${(poids / 1024).toFixed(0)} Ko de polices dans le gabarit`).toBeLessThan(
+      32 * 1024,
+    );
   });
 });

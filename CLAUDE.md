@@ -43,7 +43,7 @@ server/src/oauthRoutes.ts découverte, consentement, jetons, révocation
 server/src/cles.ts       clés d'accès WebAuthn : cérémonies, défis, vérification
 server/src/pdf/          document HTML imprimé par Chromium, charte pourpre
 server/src/pdf/file.ts   plafond d'impressions simultanées, délai d'impression
-server/src/pdf/polices/  les six woff2 incorporées, et leur générateur
+server/src/pdf/polices/  les huit woff2 incorporées, et leur générateur
 mcp/src/outils.ts        les quinze outils exposés à l'assistant
 web/src/store/dossier.ts état, recalcul, enregistrement différé, synchronisation
 web/src/layout/          coquille d'un dossier, registre des écrans, volet de résultat
@@ -108,9 +108,14 @@ fois sans interception et zéro fois avec.
 Trois conséquences qui ne se devinent pas :
 
 1. **Les polices sont incorporées en base64** (`pdf/polices.ts`, engendré par
-   `polices/engendrer.mjs`). Une police appelée depuis le réseau ne serait jamais chargée.
+   `polices/engendrer.mjs`), et **aucune n'est variable** : Chromium ne sait pas incorporer
+   une police variable dans un PDF, il en dessine chaque glyphe en Type3, une procédure de
+   tracé par caractère. Un fichier variable pour Hanken Grotesk faisait peser le dossier
+   337 Ko au lieu de 162. Les trois faces sont des instances statiques du même fichier
+   d'origine, aux mêmes métriques — 1 319 positions de texte sur 1 319 inchangées, à deux
+   centièmes d'unité près. Une police appelée depuis le réseau ne serait jamais chargée.
    Le séparateur de milliers du moteur, l'espace **fine** insécable U+202F, n'existe dans
-   aucune des six faces : `pdf/nombres.ts` la remplace par U+00A0, dont l'avance vaut
+   aucune des huit faces : `pdf/nombres.ts` la remplace par U+00A0, dont l'avance vaut
    exactement celle d'un chiffre. Tout montant du PDF passe par ce module, jamais par
    `formaterMontant()` directement.
 2. **Le pied de page est le gabarit natif de Chromium**, seul à savoir compter les pages.
@@ -166,7 +171,7 @@ premier démarrage, tout le reste vient de l'écran Administration.
 
 ```bash
 npm run typecheck      # les quatre paquets
-npm test               # 77 essais du moteur et du modèle, 221 essais du serveur
+npm test               # 77 essais du moteur et du modèle, 224 essais du serveur
 npm run build
 ```
 

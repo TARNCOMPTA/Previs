@@ -14,7 +14,7 @@ milliers dans tout Previs (`packages/core/src/format.ts`). Chromium ne montre pa
 blanc — il retombe silencieusement sur une police du système — mais cette espace de secours
 n'a pas l'avance de chasse fixe du monospace : dans une colonne de montants, les chiffres
 cessent d'être alignés les uns sous les autres. Vérifié au rendu. Le document remplace donc
-U+202F par l'espace insécable **ordinaire** U+00A0, présente dans les six faces et alignée
+U+202F par l'espace insécable **ordinaire** U+00A0, présente dans les huit faces et alignée
 sur la grille du monospace. Ce remplacement n'a lieu que dans le PDF : l'interface et le
 moteur gardent l'espace fine, qui est la forme typographique juste à l'écran.
 
@@ -25,15 +25,26 @@ qu'à écrire : `▲` (U+25B2) et `→` (U+2192).
 
 | Fichier | Famille | Graisse | Emploi |
 |---|---|---|---|
-| `HankenGrotesk-variable-latin.woff2` | Hanken Grotesk | variable, 100 à 900 | texte courant, libellés, en-têtes de tableau |
+| `HankenGrotesk-400-latin.woff2` | Hanken Grotesk | 400 | texte courant, libellés, pied de page |
+| `HankenGrotesk-600-latin.woff2` | Hanken Grotesk SemiBold | 600 | en-têtes de tableau, intertitres |
+| `HankenGrotesk-700-latin.woff2` | Hanken Grotesk Bold | 700 | `strong` dans les paragraphes |
 | `Spectral-400-latin.woff2` | Spectral | 400 | titre de couverture, titres de section |
 | `Spectral-600-latin.woff2` | Spectral SemiBold | 600 | titres accentués |
 | `IBMPlexMono-400-latin.woff2` | IBM Plex Mono | 400 | chiffres des tableaux |
 | `IBMPlexMono-500-latin.woff2` | IBM Plex Mono Medium | 500 | chiffres des totaux |
 | `IBMPlexMono-600-latin.woff2` | IBM Plex Mono SemiBold | 600 | chiffres des lignes de résultat |
 
-Hanken Grotesk est une police **variable** : un seul fichier couvre toutes les graisses de
-100 à 900, ce qui évite d'en versionner cinq.
+Les trois faces de Hanken Grotesk sont des **instances statiques** du fichier variable
+d'origine (`hanken-grotesk` 3.013, axe `wght` de 100 à 900), découpées par
+`fontTools.varLib.instancer` : mêmes contours, mêmes métriques, mêmes 268 glyphes.
+
+Un fichier variable unique aurait évité d'en versionner trois, et c'est ce que faisait la
+version précédente. Mais **Chromium ne sait pas incorporer une police variable dans un
+PDF** : il dessine chaque glyphe en Type3, une procédure de tracé par caractère. Le dossier
+pesait 337 Ko au lieu de 162, avec quinze polices Type3 là où il en faut sept. Mesuré, sur
+les trois régimes et de un à dix exercices. Ne jamais remettre de fichier variable ici : le
+contrôle est dans `engendrer.mjs`, qui refuse un fichier non déclaré, et la conséquence se
+voit dans la taille du document.
 
 ## Mentions de droits
 

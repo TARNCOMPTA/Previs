@@ -26,10 +26,21 @@ const ici = dirname(fileURLToPath(import.meta.url));
  * ce gabarit dans un document isolé, qui n'hérite pas de la feuille de style du dossier :
  * sans ses propres @font-face, le pied serait la seule ligne du document composée dans la
  * police du système. Il n'en reprend que deux — le texte et les chiffres moyens — plutôt
- * que les six, le gabarit étant réinterprété à chaque page.
+ * que les sept, le gabarit étant réinterprété à chaque page.
+ *
+ * **Aucune face n'est variable, et c'est délibéré.** Chromium ne sait pas incorporer une
+ * police variable dans un PDF : il en dessine chaque glyphe en Type3, une procédure de
+ * tracé par caractère. Le dossier pesait ainsi 337 Ko au lieu de 172, avec quinze polices
+ * Type3 là où il en faut quatre. Les trois faces de Hanken Grotesk sont donc des
+ * instances statiques du fichier variable d'origine, découpées par
+ * « fontTools.varLib.instancer » : mêmes contours, mêmes métriques, mêmes 268 glyphes.
+ * Les graisses sont celles que le document demande — 400 pour le texte, 600 pour les
+ * en-têtes, 700 pour « strong ». Ne jamais remettre un fichier variable ici.
  */
 const FACES = [
-  { fichier: 'HankenGrotesk-variable-latin.woff2', nom: 'texte', famille: 'Hanken Grotesk', graisse: '100 900', pied: true },
+  { fichier: 'HankenGrotesk-400-latin.woff2', nom: 'texte', famille: 'Hanken Grotesk', graisse: '400', pied: true },
+  { fichier: 'HankenGrotesk-600-latin.woff2', nom: 'texteGras', famille: 'Hanken Grotesk', graisse: '600' },
+  { fichier: 'HankenGrotesk-700-latin.woff2', nom: 'texteTresGras', famille: 'Hanken Grotesk', graisse: '700' },
   { fichier: 'Spectral-400-latin.woff2', nom: 'titreNormal', famille: 'Spectral', graisse: '400' },
   { fichier: 'Spectral-600-latin.woff2', nom: 'titreGras', famille: 'Spectral', graisse: '600' },
   { fichier: 'IBMPlexMono-400-latin.woff2', nom: 'chiffresNormal', famille: 'IBM Plex Mono', graisse: '400' },
@@ -84,8 +95,9 @@ const contenu = `// ⚠ Fichier engendré par polices/engendrer.mjs — ne pas m
 // le serveur a en magasin. Voir polices/LICENCES.md pour les familles et leurs droits.
 //
 // Poids total des fichiers : ${(total / 1024).toFixed(0)} Ko, soit ${((total * 4) / 3 / 1024).toFixed(0)} Ko une fois encodés.
-// Chromium n'incorpore au PDF que les glyphes réellement employés : le document produit
-// reste léger.
+// Chromium n'incorpore au PDF que les glyphes réellement employés, et seulement s'il peut
+// incorporer la police : une face variable serait dessinée glyphe par glyphe, en Type3.
+// Aucune de celles-ci ne l'est.
 
 const POLICES = {
 ${lignes.join('\n')}
