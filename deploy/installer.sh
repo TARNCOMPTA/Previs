@@ -105,6 +105,18 @@ DEPOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 [[ -f "$DEPOT/package.json" ]] || mauvais "Le script doit être lancé depuis la copie du dépôt Previs."
 ok "Dépôt : $DEPOT"
 
+# L'unité porte ProtectHome=true, qui rend /home, /root et /run/user vides pour le
+# service : une installation posée là donnerait une unité incapable de démarrer
+# (status=226/NAMESPACE). Autant le dire avant d'avoir touché à quoi que ce soit.
+case "$DEPOT/" in
+  /home/*|/root/*|/run/user/*)
+    mauvais "Le dépôt est dans $DEPOT. L'unité systemd interdit au service l'accès à /home,
+  /root et /run/user — cloisonnement voulu — et il ne démarrerait jamais depuis là.
+  Installer sous /opt ou /srv :
+    sudo git clone https://github.com/TARNCOMPTA/Previs.git /opt/previs
+    cd /opt/previs && sudo ./deploy/installer.sh …" ;;
+esac
+
 if [[ "$DEPOT" != "$RACINE" ]]; then
   # Réorienter RACINE en silence rendait --racine inopérant, et pouvait faire repartir
   # le service sur un autre répertoire de données que celui attendu. On refuse.
@@ -583,8 +595,18 @@ ok "Répertoire de données en 0700, réservé au service"
 
 # ─── Service systemd ──────────────────────────────────────────────────────────
 etape "Service systemd"
+UNITE=/etc/systemd/system/previs.service
+
+# L'unité en service est mise de côté : si le nouveau service ne répond pas, la
+# remplacer sans retour arrière laisserait un Previs qui tournait à l'arrêt.
+UNITE_AVANT=""
+if [[ -f "$UNITE" ]]; then
+  UNITE_AVANT="$(mktemp)"
+  cp -a "$UNITE" "$UNITE_AVANT"
+fi
+
 sed -e "s#/opt/previs#$RACINE#g" -e "s#^ExecStart=.*#ExecStart=$NODE packages/server/dist/index.js#" \
-  "$RACINE/deploy/previs.service" > /etc/systemd/system/previs.service
+  "$RACINE/deploy/previs.service" > "$UNITE"
 systemctl daemon-reload
 systemctl enable --quiet previs
 systemctl restart previs
@@ -593,8 +615,18 @@ for _ in $(seq 1 40); do
   if curl -fsS --max-time 2 "http://127.0.0.1:$PORT_INTERNE/api/sante" >/dev/null 2>&1; then break; fi
   sleep 0.5
 done
-curl -fsS --max-time 5 "http://127.0.0.1:$PORT_INTERNE/api/sante" >/dev/null \
-  || mauvais "Le service ne répond pas. Voir : journalctl -u previs -n 50 --no-pager"
+if ! curl -fsS --max-time 5 "http://127.0.0.1:$PORT_INTERNE/api/sante" >/dev/null; then
+  if [[ -n "$UNITE_AVANT" ]]; then
+    cp -a "$UNITE_AVANT" "$UNITE"
+    rm -f "$UNITE_AVANT"
+    systemctl daemon-reload
+    systemctl restart previs 2>/dev/null || true
+    mauvais "Le nouveau service ne répond pas. L'unité précédente a été RESTAURÉE et relancée.
+  Voir ce qui a échoué : journalctl -u previs -n 50 --no-pager"
+  fi
+  mauvais "Le service ne répond pas. Voir : journalctl -u previs -n 50 --no-pager"
+fi
+rm -f "$UNITE_AVANT"
 ok "Service démarré et répondant sur 127.0.0.1:$PORT_INTERNE"
 
 if [[ $NOUVELLE_INSTALLATION -eq 1 ]]; then
