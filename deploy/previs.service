@@ -15,6 +15,12 @@ Group=previs
 WorkingDirectory=/opt/previs
 EnvironmentFile=/opt/previs/.env
 Environment=NODE_ENV=production
+# ProtectSystem=strict rend /opt/previs en lecture seule et ProtectHome=true vide /home
+# et /root : sans cette ligne, le service tourne sans aucun foyer inscriptible. Chromium
+# s'en est passé, mais un service dans cet état est un piège en attente.
+Environment=HOME=/opt/previs/data/foyer
+Environment=XDG_CONFIG_HOME=/opt/previs/data/foyer/config
+Environment=XDG_CACHE_HOME=/opt/previs/data/foyer/cache
 ExecStart=/usr/bin/node packages/server/dist/index.js
 Restart=on-failure
 RestartSec=5

@@ -63,6 +63,10 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# Après la boucle : « --racine » a pu déplacer RACINE. Le foyer du service vit sous le
+# répertoire de données, seul chemin que l'unité systemd rend inscriptible.
+FOYER_SERVICE="$RACINE/data/foyer"
+
 # ─── Affichage ────────────────────────────────────────────────────────────────
 etape() { printf '\n\033[1;34m▸ %s\033[0m\n' "$*"; }
 ok()    { printf '  \033[32m✓\033[0m %s\n' "$*"; }
@@ -463,39 +467,69 @@ ok "Les quatre paquets sont construits"
 
 # ─── Chromium, pour la génération des PDF ─────────────────────────────────────
 etape "Chromium"
-trouver_chromium() {
+# Un Chromium fourni par la distribution, s'il y en a un qui démarre.
+trouver_chromium_distribution() {
   local candidat
   for candidat in /usr/bin/chromium /usr/bin/chromium-browser /usr/bin/google-chrome-stable /snap/bin/chromium; do
     [[ -x "$candidat" ]] && "$candidat" --version >/dev/null 2>&1 && { echo "$candidat"; return 0; }
   done
+  return 1
+}
+
+# La coquille sans affichage de Playwright, celle qu'il choisit lui-même pour un rendu
+# sans écran. C'est le binaire à éprouver, jamais celui à imposer dans .env.
+#
+# L'ancienne version prenait « find -name chrome | head -n1 », qui désigne aussi bien le
+# Chrome complet que la coquille, selon l'ordre du système de fichiers. Sur le VPS elle a
+# désigné le Chrome complet : il démarre, puis meurt au montage de son gestionnaire de
+# plantage sous une unité cloisonnée. Substituer une devinette au choix de Playwright
+# était l'erreur.
+trouver_coquille_playwright() {
+  local candidat
+  # Les noms varient d'une génération à l'autre : « headless_shell » sur les anciens
+  # paquets Chromium, « chrome-headless-shell » sur les Chrome for Testing d'aujourd'hui.
+  candidat="$(find "$RACINE/chromium" \( -type f -o -type l \) \
+    \( -name 'chrome-headless-shell' -o -name 'headless_shell' \) 2>/dev/null | head -n1 || true)"
+  [[ -n "$candidat" && -x "$candidat" ]] && { echo "$candidat"; return 0; }
   candidat="$(find "$RACINE/chromium" \( -type f -o -type l \) -name 'chrome' 2>/dev/null | head -n1 || true)"
   [[ -n "$candidat" && -x "$candidat" ]] && { echo "$candidat"; return 0; }
   return 1
 }
 
-CHROMIUM="$(trouver_chromium || true)"
+# CHROMIUM_PATH n'est renseigné que pour un Chromium de distribution. Quand les
+# navigateurs viennent de Playwright, la variable reste VIDE et c'est PLAYWRIGHT_BROWSERS_PATH
+# qui compte : Playwright sait lequel de ses binaires convient à un rendu sans écran, et il
+# le sait mieux qu'un chemin figé à l'installation.
+CHROMIUM="$(trouver_chromium_distribution || true)"
+NAVIGATEURS=""
 if [[ -z "$CHROMIUM" && "${ID:-}" == "debian" ]]; then
   # Sous Debian seulement : le paquet chromium est un vrai binaire. Sous Ubuntu ce
   # n'est qu'une coquille qui entraînerait snapd sur un serveur qui n'en a pas.
   apt-get install -y -qq --no-install-recommends chromium >/dev/null 2>&1 || true
-  CHROMIUM="$(trouver_chromium || true)"
+  CHROMIUM="$(trouver_chromium_distribution || true)"
 fi
 if [[ -z "$CHROMIUM" ]]; then
   # Sous Ubuntu, le paquet « chromium » n'est qu'une coquille renvoyant vers snap :
-  # playwright-core installe alors son propre Chromium, ainsi que ses dépendances.
-  avert "Aucun Chromium utilisable dans la distribution. Installation par playwright-core."
-  "$NODE" node_modules/playwright-core/cli.js install-deps chromium >/dev/null 2>&1 || \
-    avert "L'installation des dépendances de rendu a signalé une erreur ; on poursuit."
-  PLAYWRIGHT_BROWSERS_PATH="$RACINE/chromium" \
-    "$NODE" node_modules/playwright-core/cli.js install chromium >/dev/null
-  CHROMIUM="$(trouver_chromium || true)"
+  # playwright-core installe alors ses propres navigateurs, ainsi que ses dépendances.
+  NAVIGATEURS="$RACINE/chromium"
+  if ! trouver_coquille_playwright >/dev/null; then
+    avert "Aucun Chromium utilisable dans la distribution. Installation par playwright-core."
+    "$NODE" node_modules/playwright-core/cli.js install-deps chromium >/dev/null 2>&1 || \
+      avert "L'installation des dépendances de rendu a signalé une erreur ; on poursuit."
+    PLAYWRIGHT_BROWSERS_PATH="$NAVIGATEURS" \
+      "$NODE" node_modules/playwright-core/cli.js install chromium >/dev/null
+  fi
+  trouver_coquille_playwright >/dev/null \
+    || mauvais "Les navigateurs de Playwright restent introuvables : le PDF ne pourrait pas être produit."
 fi
-[[ -n "$CHROMIUM" ]] || mauvais "Chromium reste introuvable : le PDF ne pourrait pas être produit."
+
+# Le binaire à éprouver : celui de la distribution, ou la coquille de Playwright.
+A_EPROUVER="${CHROMIUM:-$(trouver_coquille_playwright)}"
 
 # `playwright install-deps` s'appuie sur une table de noms de version ; sur une
 # distribution trop récente il ne reconnaît rien et n'installe rien. On vérifie donc
 # que le binaire démarre, et à défaut on pose les bibliothèques de rendu nommément.
-if ! "$CHROMIUM" --headless=new --no-sandbox --disable-gpu --dump-dom about:blank >/dev/null 2>&1; then
+if ! "$A_EPROUVER" --no-sandbox --disable-gpu --dump-dom about:blank >/dev/null 2>&1; then
   avert "Chromium ne démarre pas encore : installation des bibliothèques de rendu."
   BIBLIOTHEQUES=""
   for paquet in libnss3 libnspr4 libatk1.0-0t64 libatk1.0-0 libatk-bridge2.0-0t64 \
@@ -515,7 +549,12 @@ if ! "$CHROMIUM" --headless=new --no-sandbox --disable-gpu --dump-dom about:blan
   fi
 fi
 
-ok "Chromium : $CHROMIUM ($("$CHROMIUM" --version 2>/dev/null | head -1))"
+if [[ -n "$CHROMIUM" ]]; then
+  ok "Chromium de la distribution : $CHROMIUM ($("$CHROMIUM" --version 2>/dev/null | head -1))"
+else
+  ok "Navigateurs de Playwright dans $NAVIGATEURS — le choix du binaire lui est laissé
+     (éprouvé : $A_EPROUVER)"
+fi
 
 # ─── Configuration ────────────────────────────────────────────────────────────
 etape "Configuration"
@@ -542,7 +581,12 @@ SESSION_SECRET=$SECRET
 
 DATABASE_PATH=./data/previs.db
 STATIC_PATH=./packages/web/dist
+
+# Chemin d'un Chromium de distribution. LAISSER VIDE quand les navigateurs viennent de
+# Playwright : il choisit alors sa coquille sans affichage, seule adaptée au cloisonnement
+# du service. Un chemin imposé désigne le Chrome complet, qui démarre puis s'arrête.
 CHROMIUM_PATH=$CHROMIUM
+PLAYWRIGHT_BROWSERS_PATH=$NAVIGATEURS
 
 SECURE_COOKIES=$([[ $SANS_TLS -eq 1 ]] && echo false || echo true)
 MCP_HTTP_ENABLED=true
@@ -560,11 +604,19 @@ CONFIG
 else
   # Le chemin de Chromium peut changer d'une installation à l'autre ; le reste,
   # secrets compris, est laissé intact.
-  if grep -q '^CHROMIUM_PATH=' "$RACINE/.env"; then
-    sed -i "s#^CHROMIUM_PATH=.*#CHROMIUM_PATH=$CHROMIUM#" "$RACINE/.env"
-  else
-    echo "CHROMIUM_PATH=$CHROMIUM" >> "$RACINE/.env"
-  fi
+  # Les deux variables du navigateur sont réécrites ensemble : une installation
+  # antérieure porte un CHROMIUM_PATH figé vers le Chrome complet, qui est précisément la
+  # panne à corriger.
+  for variable in "CHROMIUM_PATH=$CHROMIUM" "PLAYWRIGHT_BROWSERS_PATH=$NAVIGATEURS"; do
+    nom="${variable%%=*}"
+    if grep -q "^$nom=" "$RACINE/.env"; then
+      avant="$(grep -m1 "^$nom=" "$RACINE/.env")"
+      sed -i "s#^$nom=.*#$variable#" "$RACINE/.env"
+      [[ "$avant" == "$variable" ]] || avert "$nom : « ${avant#*=} » → « ${variable#*=} »"
+    else
+      echo "$variable" >> "$RACINE/.env"
+    fi
+  done
   if [[ "$PORT_INTERNE" != "$PORT_EXISTANT" ]]; then
     sed -i "s/^PORT=.*/PORT=$PORT_INTERNE/" "$RACINE/.env"
     avert "Port modifié dans .env : $PORT_EXISTANT → $PORT_INTERNE"
@@ -592,6 +644,13 @@ chmod 0640 "$RACINE/.env"
 
 install -d -o "$UTILISATEUR" -g "$UTILISATEUR" -m 0700 "$RACINE/data"
 ok "Répertoire de données en 0700, réservé au service"
+
+# Un foyer inscriptible pour le service. « ProtectSystem=strict » rend /opt/previs en
+# lecture seule et « ProtectHome=true » vide /home et /root : le compte de service se
+# retrouvait sans aucun HOME utilisable. Chromium n'en a pas eu besoin ici, mais un
+# service dont le foyer n'est pas inscriptible est un piège en attente.
+install -d -o "$UTILISATEUR" -g "$UTILISATEUR" -m 0700 "$FOYER_SERVICE"
+ok "Foyer du service : $FOYER_SERVICE"
 
 # ─── Service systemd ──────────────────────────────────────────────────────────
 etape "Service systemd"
@@ -831,14 +890,26 @@ ok "En-têtes de sécurité présents"
 
 # Chromium est la pièce la plus fragile d'une installation : on l'éprouve avec les
 # mêmes arguments que le générateur de PDF, plutôt que de se fier à --version.
-if sudo -u "$UTILISATEUR" env HOME=/tmp "$CHROMIUM" \
-     --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage \
-     --dump-dom about:blank >/dev/null 2>&1; then
-  ok "Chromium démarre sous le compte de service"
-else
-  mauvais "Chromium ne démarre pas sous le compte « $UTILISATEUR » : l'export PDF échouerait.
-  Essayer : sudo -u $UTILISATEUR $CHROMIUM --headless=new --no-sandbox --dump-dom about:blank"
-fi
+# L'ancien contrôle lançait le binaire à la main, avec « HOME=/tmp » — un répertoire
+# inscriptible que le service n'a pas — et sans les arguments du générateur : il pouvait
+# passer alors que l'export échouait, et c'est ce qui s'est produit. Le service éprouve
+# désormais sa sortie PDF lui-même à chaque démarrage, dans son processus et sous son
+# cloisonnement ; il suffit de lire son verdict. Cela vaut aussi pour une mise à jour,
+# alors que l'ancien essai de bout en bout ne tournait qu'à la première installation.
+FICHIER_ETAT_PDF="$RACINE/data/etat-pdf"
+ETAT_PDF="$(head -n1 "$FICHIER_ETAT_PDF" 2>/dev/null || true)"
+case "$ETAT_PDF" in
+  operationnelle)
+    ok "Sortie PDF éprouvée par le service lui-même : $(sed -n '2p' "$FICHIER_ETAT_PDF")" ;;
+  indisponible)
+    mauvais "Le service démarre mais ne peut pas produire de PDF.
+  Motif rapporté :
+    $(sed -n '2,12p' "$FICHIER_ETAT_PDF" | sed 's/^/    /')
+  Journal complet : sudo journalctl -u previs -n 60 --no-pager" ;;
+  *)
+    avert "Le service n'a pas déposé de verdict sur la sortie PDF.
+     Vérifier : sudo journalctl -u previs -n 60 --no-pager" ;;
+esac
 
 # Sur une première installation, on connaît les identifiants : on produit un vrai
 # PDF de bout en bout, puis on efface le dossier d'essai.

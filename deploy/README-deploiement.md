@@ -42,7 +42,7 @@ Le script installe Node, nginx, Chromium et certbot, construit les quatre paquet
 génère la configuration et son secret de session, met le service sous systemd,
 obtient le certificat, ferme le pare-feu, installe la sauvegarde quotidienne, puis
 **éprouve l'installation** : santé du service, chargement de l'interface, en-têtes
-de sécurité, démarrage de Chromium sous le compte de service, et production d'un
+de sécurité, verdict du service sur sa propre sortie PDF, et production d'un
 vrai PDF de bout en bout. Il affiche à la fin le mot de passe du premier compte
 administrateur.
 
@@ -420,10 +420,40 @@ Les migrations de base s'appliquent au démarrage et sont idempotentes : une mis
 
 ## Dépannage
 
-**L'export PDF échoue.** Chromium est introuvable ou incomplet. Vérifiez
-`CHROMIUM_PATH` (`/usr/bin/chromium` sous Debian) et que le paquet est installé.
-Sous Docker, `shm_size` doit rester à 512 Mo : Chromium échoue silencieusement
-avec la valeur par défaut de 64 Mo.
+**L'export PDF échoue.** Commencez par lire le verdict que le service dépose à chaque
+démarrage — il éprouve sa sortie PDF lui-même, dans son propre processus :
+
+```bash
+cat /opt/previs/data/etat-pdf        # « operationnelle » ou « indisponible » + le motif
+sudo journalctl -u previs -n 60 --no-pager
+```
+
+Le motif oriente le dépannage, et il faut le lire avant de conclure :
+
+- **« Aucun navigateur installé pour Playwright »** — les navigateurs manquent. Vérifiez
+  `PLAYWRIGHT_BROWSERS_PATH` dans `.env`, ou réinstallez-les :
+  `cd /opt/previs && sudo -u previs node node_modules/playwright-core/cli.js install chromium`
+  avec `PLAYWRIGHT_BROWSERS_PATH=/opt/previs/chromium`.
+- **« Le binaire a démarré puis s'est arrêté »** — ce n'est ni `CHROMIUM_PATH` ni le
+  paquet : le binaire existe et s'exécute. La cause la plus fréquente est un
+  `CHROMIUM_PATH` qui désigne le **Chrome complet** au lieu de la coquille sans affichage.
+  Playwright livre les deux (`chromium-<rev>/` et `chromium_headless_shell-<rev>/`) et sait
+  lequel employer ; un chemin figé le lui retire. La correction est de **vider
+  `CHROMIUM_PATH`** et de laisser `PLAYWRIGHT_BROWSERS_PATH` faire son travail :
+
+  ```bash
+  sudo sed -i 's#^CHROMIUM_PATH=.*#CHROMIUM_PATH=#' /opt/previs/.env
+  grep -q '^PLAYWRIGHT_BROWSERS_PATH=' /opt/previs/.env \
+    || echo 'PLAYWRIGHT_BROWSERS_PATH=/opt/previs/chromium' | sudo tee -a /opt/previs/.env
+  sudo systemctl restart previs && cat /opt/previs/data/etat-pdf
+  ```
+
+  Le signe caractéristique dans le journal est `chrome_crashpad_handler: --database is
+  required` suivi d'un arrêt sur `SIGTRAP` : le Chrome complet ne monte pas son
+  gestionnaire de plantage sous une unité cloisonnée. `CHROMIUM_PATH` ne doit porter un
+  chemin que pour un vrai Chromium de distribution, sous Debian par exemple.
+- Sous Docker, `shm_size` doit rester à 512 Mo : Chromium échoue silencieusement avec la
+  valeur par défaut de 64 Mo.
 
 **« Le service n'a pas pu démarrer : SESSION_SECRET est absent ».** Le refus est
 volontaire : sans secret, les sessions seraient falsifiables. Générez-en un.

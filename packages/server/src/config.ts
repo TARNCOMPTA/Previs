@@ -63,7 +63,9 @@ export function chargerConfiguration(racine = process.cwd()): Configuration {
     secretSession: secretSession || 'secret-de-developpement-non-securise',
     cheminBase: resolve(racine, process.env.DATABASE_PATH ?? './data/previs.db'),
     cheminStatique: resolve(racine, process.env.STATIC_PATH ?? './packages/web/dist'),
-    cheminChromium: process.env.CHROMIUM_PATH ?? '/usr/bin/chromium',
+    // Vide à dessein quand la variable est absente : Playwright choisit alors lui-même
+    // le binaire adapté, ce qu'il fait mieux qu'un chemin deviné à l'installation.
+    cheminChromium: (process.env.CHROMIUM_PATH ?? '').trim(),
     cookiesSecurises: (process.env.SECURE_COOKIES ?? String(production)) === 'true',
     // Faire confiance à tout le monde laisserait n'importe quel client forger son
     // adresse et contourner ainsi la limitation des tentatives de connexion. Seuls

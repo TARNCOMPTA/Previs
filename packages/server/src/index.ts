@@ -1,13 +1,14 @@
 import compression from '@fastify/compress';
 import cookie from '@fastify/cookie';
 import statique from '@fastify/static';
-import { existsSync } from 'node:fs';
-import { sep } from 'node:path';
+import { existsSync, writeFileSync } from 'node:fs';
+import { dirname, resolve, sep } from 'node:path';
 import Fastify from 'fastify';
 import { ServiceAuthentification } from './auth.js';
 import { journaliser, ouvrirBase, purgerSessions, type BaseDonnees } from './base.js';
 import { ServiceCabinet } from './cabinet.js';
 import { ServiceClesAcces } from './cles.js';
+import { eprouverSortiePdf } from './pdf/index.js';
 import { chargerConfiguration, type Configuration } from './config.js';
 import { DepotSqlite } from './depot.js';
 import { monterMcpHttp } from './mcpHttp.js';
@@ -179,6 +180,33 @@ async function demarrer(): Promise<void> {
   console.log(`  Previs écoute sur http://${config.host}:${config.port}`);
   console.log(`  Base de données : ${config.cheminBase}`);
   if (config.mcpHttpActif) console.log(`  Serveur MCP monté sur ${config.urlPublique}/mcp`);
+
+  // La sortie PDF est éprouvée ici, dans le processus du service : c'est le seul endroit
+  // où le cloisonnement de l'unité, le compte, l'environnement et les arguments réels sont
+  // tous réunis. Le premier navigateur reste ouvert, ce qui rend le premier export instantané.
+  const pdf = await eprouverSortiePdf();
+  if (pdf.ok) {
+    console.log(`  Sortie PDF éprouvée : ${pdf.message}`);
+  } else {
+    console.error(
+      `\n  La sortie PDF ne fonctionne pas. Les dossiers restent consultables et modifiables,\n` +
+        `  mais aucun PDF ne pourra être produit.\n\n  ${pdf.message}\n`,
+    );
+  }
+
+  // Le verdict est aussi déposé à côté de la base : l'installateur le lit en root, ce
+  // qui l'éprouve enfin sur une mise à jour et pas seulement à la première installation.
+  // Il n'est pas publié sur /api/sante : la route publique ne doit rien révéler du
+  // service, et un essai veille à ce que sa réponse ne s'étoffe pas.
+  try {
+    writeFileSync(
+      resolve(dirname(config.cheminBase), 'etat-pdf'),
+      `${pdf.ok ? 'operationnelle' : 'indisponible'}\n${pdf.message}\n`,
+      { mode: 0o600 },
+    );
+  } catch {
+    // Un répertoire de données en lecture seule ne doit pas empêcher le service de servir.
+  }
 
   // Les métadonnées OAuth publient PUBLIC_URL telle quelle. En clair, un connecteur
   // refuse le serveur d'autorisation sans le dire clairement : mieux vaut l'annoncer ici.
