@@ -40,7 +40,23 @@ export async function construireApplication(config: Configuration): Promise<Appl
 
   const app = Fastify({
     logger: { level: config.niveauJournal },
-    bodyLimit: 16 * 1024 * 1024,
+    /*
+     * Un mégaoctet, et non seize.
+     *
+     * Le plafond global est la SEULE borne qu'un point d'entrée anonyme rencontre avant
+     * l'analyse de son corps : la limitation de débit, elle, vit dans le corps du
+     * gestionnaire, donc après. Et `@fastify/compress`, enregistré globalement, pose un
+     * crochet de DÉCOMPRESSION sur chaque route : mesuré, 14 625 octets de gzip se
+     * détendent en 14,3 Mo et coûtent 110 à 134 ms de boucle d'événements bloquée — sur une
+     * adresse dont le compteur répond déjà 429. Rapport de 1026 pour 1, dans un processus
+     * mono-fil : une centaine de kilo-octets par seconde suffisaient à saturer le serveur.
+     *
+     * Le plafond s'applique au flux DÉCOMPRESSÉ, ce qui interrompt la détente en cours.
+     * Un mégaoctet couvre le plus gros corps légitime — un logo, borné à 700 000 caractères
+     * de base64 par le contrat — et le dossier lui-même, borné à 1,5 Mo, a sa propre porte,
+     * ouverte ci-dessous sur les seules routes qui le portent.
+     */
+    bodyLimit: 1024 * 1024,
     trustProxy: config.confianceProxy,
   });
 

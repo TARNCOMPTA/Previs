@@ -172,7 +172,7 @@ premier démarrage, tout le reste vient de l'écran Administration.
 
 ```bash
 npm run typecheck      # les quatre paquets
-npm test               # 77 essais du moteur, 224 du serveur, 11 du magasin de l'interface
+npm test               # 77 essais du moteur, 232 du serveur, 11 du magasin de l'interface
 npm run build
 ```
 
@@ -251,7 +251,7 @@ connexion par adresse **et** par compte. Ne jamais consigner un mot de passe, un
 jeton en clair ou le contenu d'un dossier dans les journaux. Le serveur refuse de
 démarrer en production sans `SESSION_SECRET`.
 
-Sept règles à ne pas défaire :
+Neuf règles à ne pas défaire :
 
 1. **Un chemin d'opération est borné.** `resoudreChemin()` n'accepte que les sept
    sections du dossier, refuse `__proto__`, `prototype` et `constructor`, et ne
@@ -288,6 +288,22 @@ Sept règles à ne pas défaire :
    de configuration — sur le mot de passe comme sur les clés. Sans la preuve fraîche, une
    session dérobée deviendrait un accès durable qu'un changement de mot de passe ne
    refermerait pas.
+
+8. **Ce qu'un anonyme peut faire coûter est borné avant l'analyse du corps.** Le plafond de
+   corps global vaut un mégaoctet, et non seize : la limitation de débit vit dans le
+   gestionnaire, donc APRÈS l'analyse, et ne borne pas le coût d'une requête. Les trois
+   points d'entrée joignables sans authentification refusent en outre la décompression —
+   `@fastify/compress`, enregistré globalement, pose un crochet de détente sur chaque route,
+   et 14 625 octets de gzip s'y détendaient en 14,3 Mo pour 110 à 134 ms de boucle
+   d'événements bloquée, sur une adresse dont le compteur répondait déjà 429. Rapport de
+   1026 pour 1, dans un processus mono-fil. Les trois routes qui portent un dossier ont leur
+   propre plafond, à deux mégaoctets.
+9. **L'ampleur d'un dossier est bornée dans son ensemble, à l'écriture seulement.**
+   `LIGNES_MAX` est posé par LISTE, et il y a douze listes : à lui seul il laissait passer un
+   dossier de vingt mégaoctets dont chaque plafond documenté était pourtant respecté.
+   `verifierAmpleurDossier()` est appelée depuis `ecrire()` et `creer()`, jamais à la
+   lecture — un dossier déjà en base doit rester consultable. Et l'écriture est plafonnée en
+   débit comme l'export PDF l'était.
 
 `packages/core/test/securite.test.ts`, `packages/server/test/securite.test.ts`,
 `packages/server/test/oauth.test.ts` et `packages/server/test/cles.test.ts` verrouillent

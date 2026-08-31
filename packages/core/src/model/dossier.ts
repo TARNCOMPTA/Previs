@@ -6,6 +6,7 @@ import { zIdentite } from './identite.js';
 import { zParametres } from './parametres.js';
 import { zSectionInvestissements } from './investissements.js';
 import { zSectionRecettes } from './recettes.js';
+import { LIGNES_TOTAL_MAX, TAILLE_DOSSIER_MAX } from './common.js';
 
 /** Version du schéma de données. Incrémentée à chaque changement cassant du modèle. */
 export const VERSION_SCHEMA = 1;
@@ -164,6 +165,62 @@ export function ajusterSeries(dossier: Dossier): Dossier {
  */
 export function normaliserDossier(entree: unknown): Dossier {
   return ajusterSeries(zDossier.parse(entree));
+}
+
+/** Les douze listes adressables, pour compter les lignes du dossier entier. */
+const LISTES_DU_DOSSIER: ReadonlyArray<readonly [keyof Dossier, string]> = [
+  ['investissements', 'lignes'],
+  ['investissements', 'cessions'],
+  ['financements', 'apports'],
+  ['financements', 'emprunts'],
+  ['financements', 'subventions'],
+  ['financements', 'creditsBaux'],
+  ['charges', 'lignes'],
+  ['charges', 'personnel'],
+  ['recettes', 'lignes'],
+  ['autres', 'exceptionnels'],
+  ['autres', 'distributions'],
+  ['autres', 'passifDeclare'],
+];
+
+/**
+ * Vérifie l'ampleur d'un dossier : nombre total de lignes, et poids sérialisé.
+ *
+ * `LIGNES_MAX` est posé par LISTE, et il y a douze listes : à lui seul, il laissait passer
+ * un dossier de vingt mégaoctets dont chaque plafond documenté était pourtant respecté.
+ * Ces deux bornes-ci portent sur le dossier entier, et c'est le seul endroit d'où l'on voit
+ * ce que le dossier pèse réellement.
+ *
+ * À appeler sur le chemin d'ÉCRITURE seulement, jamais à la lecture : un dossier déjà en
+ * base, si volumineux soit-il, doit rester consultable — on ne refuse pas d'afficher ce
+ * qu'on a accepté d'écrire.
+ *
+ * Rend le motif du refus, ou `null` si le dossier tient dans les bornes.
+ */
+export function verifierAmpleurDossier(dossier: Dossier): string | null {
+  let lignes = 0;
+  for (const [section, propriete] of LISTES_DU_DOSSIER) {
+    const conteneur = dossier[section] as unknown as Record<string, unknown>;
+    const liste = conteneur?.[propriete];
+    if (Array.isArray(liste)) lignes += liste.length;
+  }
+  if (lignes > LIGNES_TOTAL_MAX) {
+    return (
+      `Ce dossier compte ${lignes} lignes, toutes sections confondues, pour un maximum de ` +
+      `${LIGNES_TOTAL_MAX}. Un dossier prévisionnel de cabinet en compte quelques dizaines : ` +
+      'répartir le travail sur plusieurs dossiers, ou regrouper les postes.'
+    );
+  }
+
+  const octets = JSON.stringify(dossier).length;
+  if (octets > TAILLE_DOSSIER_MAX) {
+    return (
+      `Ce dossier pèse ${Math.round(octets / 1024)} Ko, pour un maximum de ` +
+      `${Math.round(TAILLE_DOSSIER_MAX / 1024)} Ko. Les clés de répartition mensuelles et les ` +
+      'notes de ligne sont ce qui pèse le plus : en alléger quelques-unes suffit.'
+    );
+  }
+  return null;
 }
 
 /** Résultat d'une validation : liste d'anomalies non bloquantes. */

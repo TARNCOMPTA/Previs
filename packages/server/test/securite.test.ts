@@ -1,5 +1,16 @@
 import { beforeAll, afterAll, describe, expect, it } from 'vitest';
-import { ENTETE_JETON } from '@previs/core';
+import { gzipSync } from 'node:zlib';
+import {
+  completerLigne,
+  ENTETE_JETON,
+  modeleDossier,
+  normaliserDossier,
+} from '@previs/core';
+
+/** Le plus petit PNG valable : un pixel. Le contrôle du logo lit les octets. */
+const PNG_MINIMAL =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42m' +
+  'NkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
 import type { FastifyInstance } from 'fastify';
 import { construireApplication, type Application } from '../src/index.js';
 import type { Configuration } from '../src/config.js';
@@ -680,5 +691,231 @@ describe('le délai d’impression', () => {
     // « unhandledRejection », et le service tombe.
     rejeter(new Error('Chromium fermé'));
     await new Promise((r) => setTimeout(r, 10));
+  });
+});
+
+describe('ce qu’un anonyme peut faire coûter au serveur', () => {
+  /*
+   * Le plafond de corps global était de seize mégaoctets, et c'est la SEULE borne qu'un
+   * point d'entrée anonyme rencontre avant l'analyse de son corps : la limitation de débit,
+   * elle, vit dans le gestionnaire, donc après. Pire, `@fastify/compress` est enregistré
+   * globalement et pose un crochet de DÉCOMPRESSION sur chaque route — mesuré, 14 625
+   * octets de gzip se détendaient en 14,3 Mo et coûtaient 110 à 134 ms de boucle
+   * d'événements bloquée, sur une adresse dont le compteur répondait déjà 429.
+   */
+  const ANONYMES = [
+    '/api/auth/connexion',
+    '/api/auth/cles/connexion/options',
+    '/api/auth/cles/connexion',
+  ] as const;
+
+  it('un corps démesuré est refusé avant d’être analysé', async () => {
+    const enorme = JSON.stringify({ reponse: 'A'.repeat(2_000_000) });
+    for (const url of ANONYMES) {
+      const r = await app.inject({
+        method: 'POST',
+        url,
+        headers: { 'content-type': 'application/json' },
+        payload: enorme,
+      });
+      expect(r.statusCode, url).toBe(413);
+    }
+  });
+
+  it('un corps comprimé n’est pas détendu sur un point d’entrée anonyme', async () => {
+    const charge = Buffer.from(JSON.stringify({ reponse: 'A'.repeat(15_000_000) }));
+    const bombe = gzipSync(charge);
+    // Le rapport est ce qui fait l'attaque : quelques kilo-octets pour quinze mégaoctets.
+    expect(charge.length / bombe.length).toBeGreaterThan(500);
+
+    for (const url of ANONYMES) {
+      const debut = performance.now();
+      const r = await app.inject({
+        method: 'POST',
+        url,
+        headers: { 'content-type': 'application/json', 'content-encoding': 'gzip' },
+        payload: bombe,
+      });
+      const cout = performance.now() - debut;
+      // Ni 200 ni un traitement : la requête est écartée sur son encodage.
+      expect(r.statusCode, url).toBe(400);
+      // Et surtout, elle ne coûte pas le prix de la détente. Le seuil est large : ce qui
+      // est éprouvé est l'ordre de grandeur, 1 ms contre 110.
+      expect(cout, `${url} : ${cout.toFixed(0)} ms`).toBeLessThan(40);
+    }
+  });
+
+  it('et le plafond global couvre aussi les routes authentifiées', async () => {
+    // Le plafond par route ne protège que les routes qu'on a pensé à munir. Celui-ci
+    // couvre toutes les autres, y compris celles qu'on ajoutera : deux mégaoctets sur
+    // une route qui n'a rien à voir avec un dossier doivent être refusés.
+    const enorme = JSON.stringify({ libelle: 'A'.repeat(2_000_000), validiteJours: 1 });
+    const r = await app.inject({
+      method: 'POST',
+      url: '/api/jetons',
+      headers: { cookie: cookieAdmin, origin: ORIGINE, 'content-type': 'application/json' },
+      payload: enorme,
+    });
+    expect(r.statusCode).toBe(413);
+  });
+
+  it('le trafic ordinaire de ces routes passe toujours', async () => {
+    const r = await app.inject({
+      method: 'POST',
+      url: '/api/auth/connexion',
+      headers: { origin: ORIGINE },
+      payload: { email: 'inconnu@tarncompta.fr', motDePasse: MOT_DE_PASSE },
+      remoteAddress: '10.9.9.9',
+    });
+    expect(r.statusCode).toBe(401);
+  });
+
+  it('les routes qui portent un dossier acceptent un corps plus large', async () => {
+    // Un dossier réel de cinq cents lignes pèse 125 Ko : il doit passer sans discussion.
+    const gros = normaliserDossier({
+      ...modeleDossier('IS'),
+      charges: {
+        ...modeleDossier('IS').charges,
+        lignes: Array.from({ length: 500 }, (_, i) =>
+          completerLigne('charges.lignes', {
+            id: `c${i}`,
+            libelle: `Charge ${i}`,
+            montants: [1000, 1100, 1200],
+          }),
+        ),
+      },
+    });
+    const cree = await app.inject({
+      method: 'POST',
+      url: '/api/dossiers',
+      headers: { [ENTETE_JETON]: jetonAdmin },
+      payload: { nom: 'Cinq cents lignes', modele: 'IS' },
+    });
+    const r = await app.inject({
+      method: 'PUT',
+      url: `/api/dossiers/${cree.json().id}`,
+      headers: { [ENTETE_JETON]: jetonAdmin },
+      payload: { dossier: gros, versionAttendue: 1 },
+    });
+    expect(r.statusCode, r.body.slice(0, 200)).toBe(200);
+  });
+});
+
+describe('l’ampleur d’un dossier est bornée dans son ensemble', () => {
+  /*
+   * `LIGNES_MAX` est posé par LISTE, et il y a douze listes adressables : à lui seul, il
+   * laissait passer un dossier de vingt mégaoctets dont chaque plafond documenté était
+   * pourtant respecté. Le relire coûtait 688 ms, le modifier d'une opération triviale
+   * 1 269 ms, et l'historique en gardait cent copies.
+   */
+  it('un dossier trop lourd est refusé, en disant pourquoi', async () => {
+    const modele = modeleDossier('IS');
+    const lourd = normaliserDossier({
+      ...modele,
+      charges: {
+        ...modele.charges,
+        lignes: Array.from({ length: 500 }, (_, i) =>
+          completerLigne('charges.lignes', {
+            id: `c${i}`,
+            libelle: `Charge ${i}`.padEnd(200, 'x'),
+            note: 'n'.repeat(2000),
+            montants: [1000, 1000, 1000],
+            repartition: {
+              type: 'mensuel',
+              montants: Array.from({ length: 10 }, () => Array.from({ length: 24 }, () => 83.33)),
+            },
+          }),
+        ),
+      },
+    });
+    expect(JSON.stringify(lourd).length).toBeGreaterThan(1_500_000);
+
+    const cree = await app.inject({
+      method: 'POST',
+      url: '/api/dossiers',
+      headers: { [ENTETE_JETON]: jetonAdmin },
+      payload: { nom: 'Dossier hors normes', modele: 'IS' },
+    });
+    const r = await app.inject({
+      method: 'PUT',
+      url: `/api/dossiers/${cree.json().id}`,
+      headers: { [ENTETE_JETON]: jetonAdmin },
+      payload: { dossier: lourd, versionAttendue: 1 },
+    });
+    expect(r.statusCode).toBe(422);
+    expect(r.json().erreur).toMatch(/Ko, pour un maximum de/);
+  });
+
+  it('la création est bornée elle aussi : elle accepte un dossier complet', async () => {
+    const modele = modeleDossier('IS');
+    const trop = normaliserDossier({
+      ...modele,
+      charges: {
+        ...modele.charges,
+        lignes: Array.from({ length: 500 }, (_, i) =>
+          completerLigne('charges.lignes', {
+            id: `c${i}`,
+            libelle: 'x'.repeat(200),
+            note: 'n'.repeat(2000),
+            montants: [1000, 1000, 1000],
+            repartition: {
+              type: 'mensuel',
+              montants: Array.from({ length: 10 }, () => Array.from({ length: 24 }, () => 83.33)),
+            },
+          }),
+        ),
+      },
+    });
+    expect(JSON.stringify(trop).length).toBeGreaterThan(1_500_000);
+    const r = await app.inject({
+      method: 'POST',
+      url: '/api/dossiers',
+      headers: { [ENTETE_JETON]: jetonAdmin },
+      payload: { nom: 'Créé trop gros', dossier: trop },
+    });
+    expect(r.statusCode).toBe(422);
+  });
+});
+
+describe('la liste des dossiers ne porte pas les logos', () => {
+  /*
+   * Un logo pèse jusqu'à 700 000 caractères de base64, et la liste d'accueil les servait
+   * tous, à chaque affichage, alors qu'aucun écran ne s'en sert. Mesuré : vingt dossiers
+   * portant un logo de 626 Ko donnaient 12,2 Mo de réponse, contre 5,8 Ko sans eux.
+   */
+  it('elle dit qu’un logo existe, sans le transmettre', async () => {
+    const cree = await app.inject({
+      method: 'POST',
+      url: '/api/dossiers',
+      headers: { [ENTETE_JETON]: jetonAdmin },
+      payload: { nom: 'Avec logo', modele: 'IS' },
+    });
+    const id = cree.json().id as string;
+    const pose = await app.inject({
+      method: 'PUT',
+      url: `/api/dossiers/${id}/logo`,
+      headers: { [ENTETE_JETON]: jetonAdmin },
+      payload: { logo: PNG_MINIMAL },
+    });
+    expect(pose.statusCode, pose.body.slice(0, 200)).toBe(200);
+
+    const liste = await app.inject({
+      method: 'GET',
+      url: '/api/dossiers',
+      headers: { [ENTETE_JETON]: jetonAdmin },
+    });
+    const resume = (liste.json() as Array<Record<string, unknown>>).find((d) => d.id === id)!;
+    expect(resume.aUnLogo).toBe(true);
+    expect(resume).not.toHaveProperty('logo');
+    expect(liste.body).not.toContain(PNG_MINIMAL.slice(30, 60));
+
+    // Le dossier complet, lui, le porte : c'est de là que l'écran et le PDF le lisent.
+    const complet = await app.inject({
+      method: 'GET',
+      url: `/api/dossiers/${id}`,
+      headers: { [ENTETE_JETON]: jetonAdmin },
+    });
+    expect(complet.json().logo).toBe(PNG_MINIMAL);
+    expect(complet.json().aUnLogo).toBe(true);
   });
 });

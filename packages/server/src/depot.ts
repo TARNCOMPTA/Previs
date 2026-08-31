@@ -6,6 +6,7 @@ import {
   ErreurDepot,
   modeleDossier,
   normaliserDossier,
+  verifierAmpleurDossier,
   type Auteur,
   type DepotDossiers,
   type Dossier,
@@ -36,9 +37,15 @@ const VERSIONS_CONSERVEES = 100;
 const FENETRE_REGROUPEMENT_MS = 10 * 60 * 1000;
 
 /** Colonnes de la fiche résumé, sans le contenu du dossier. */
+/*
+ * Le logo n'est pas lu ici : seule sa PRÉSENCE l'est. La colonne porte jusqu'à
+ * 700 000 caractères de base64, et la liste d'accueil les servait tous, pour chaque
+ * dossier, alors qu'aucun écran ne s'en sert — mesuré à 3,91 Mo là où 5,9 Ko suffisent.
+ */
 const COLONNES_RESUME =
   'id, nom, version, client, regime, type_dossier, nb_exercices, annee_debut, ' +
-  'ca_premier_exercice, coherent, cree_le, modifie_le, modifie_par, logo';
+  'ca_premier_exercice, coherent, cree_le, modifie_le, modifie_par, ' +
+  "(logo IS NOT NULL AND logo <> '') AS a_un_logo";
 
 interface LigneResume {
   id: string;
@@ -54,11 +61,13 @@ interface LigneResume {
   cree_le: string;
   modifie_le: string;
   modifie_par: string;
-  logo: string | null;
+  /** 1 si un logo est déposé — la colonne elle-même n'est pas lue par la liste. */
+  a_un_logo: number;
 }
 
-interface LigneDossier extends LigneResume {
+interface LigneDossier extends Omit<LigneResume, 'a_un_logo'> {
   contenu: string;
+  logo: string | null;
 }
 
 function versResume(ligne: LigneResume): ResumeDossier {
@@ -76,7 +85,7 @@ function versResume(ligne: LigneResume): ResumeDossier {
     modifieLe: ligne.modifie_le,
     modifiePar: ligne.modifie_par,
     coherent: ligne.coherent === 1,
-    logo: ligne.logo ?? '',
+    aUnLogo: ligne.a_un_logo === 1,
   };
 }
 
@@ -88,7 +97,11 @@ function versResume(ligne: LigneResume): ResumeDossier {
  * revalider à chaque calcul.
  */
 function versEnregistre(ligne: LigneDossier): DossierEnregistre {
-  return { ...versResume(ligne), dossier: normaliserDossier(JSON.parse(ligne.contenu)) };
+  return {
+    ...versResume({ ...ligne, a_un_logo: ligne.logo ? 1 : 0 }),
+    logo: ligne.logo ?? '',
+    dossier: normaliserDossier(JSON.parse(ligne.contenu)),
+  };
 }
 
 /**
@@ -162,6 +175,10 @@ export class DepotSqlite implements DepotDossiers {
       requete.dossier ??
       (requete.modele === 'vide' ? dossierVide() : modeleDossier(requete.modele));
     const dossier = normaliserDossier(base);
+    // La création accepte un dossier complet fourni par l'appelant : elle est donc une
+    // frontière d'écriture au même titre que `ecrire()`, et porte la même borne.
+    const refus = verifierAmpleurDossier(dossier);
+    if (refus) throw new ErreurDepot('donnees_invalides', refus);
     if (!dossier.identite.raisonSociale) dossier.identite.raisonSociale = requete.nom;
 
     const id = nouvelIdentifiant('dos');
@@ -293,7 +310,12 @@ export class DepotSqlite implements DepotDossiers {
       .prepare('SELECT contenu FROM versions_dossier WHERE dossier_id = ? AND version = ?')
       .get(id, version) as { contenu: string } | undefined;
     if (!archive) return null;
-    return { ...versResume(ligne), version, dossier: JSON.parse(archive.contenu) as Dossier };
+    return {
+      ...versResume({ ...ligne, a_un_logo: ligne.logo ? 1 : 0 }),
+      logo: ligne.logo ?? '',
+      version,
+      dossier: JSON.parse(archive.contenu) as Dossier,
+    };
   }
 
   async restaurer(id: string, version: number, auteur: Auteur): Promise<DossierEnregistre> {
@@ -350,6 +372,15 @@ export class DepotSqlite implements DepotDossiers {
     auteur: Auteur,
     commentaire: string,
   ): DossierEnregistre {
+    /*
+     * L'ampleur du dossier est contrôlée ici, et ici seulement : c'est l'entonnoir par
+     * lequel passent l'enregistrement complet, l'application d'opérations et la
+     * restauration. Le contrôler à la lecture serait une faute — un dossier déjà en base
+     * doit rester consultable, on ne refuse pas d'afficher ce qu'on a accepté d'écrire.
+     */
+    const refus = verifierAmpleurDossier(dossier);
+    if (refus) throw new ErreurDepot('donnees_invalides', refus);
+
     const version = ligne.version + 1;
     const maintenant = new Date().toISOString();
     const info = indicateurs(dossier);

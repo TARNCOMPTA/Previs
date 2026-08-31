@@ -38,13 +38,27 @@ export interface ResumeDossier {
   modifiePar: string;
   /** Faux si le dernier calcul enregistré présentait un contrôle en erreur. */
   coherent: boolean;
-  /** Logo du client, en URI de données. Chaîne vide si aucun n'a été déposé. */
-  logo: string;
+  /**
+   * Vrai si un logo a été déposé pour ce client.
+   *
+   * Le logo LUI-MÊME n'est pas dans le résumé, et c'est délibéré : il pèse jusqu'à
+   * 700 000 caractères de base64, et la liste d'accueil les servait tous, pour chaque
+   * dossier, alors qu'aucun écran ne s'en sert. Le logo se lit par `GET /api/dossiers/:id`,
+   * qui en rend un seul.
+   */
+  aUnLogo: boolean;
 }
 
 /** Dossier complet tel que renvoyé par l'API. */
 export interface DossierEnregistre extends ResumeDossier {
   dossier: Dossier;
+  /**
+   * Logo du client, en URI de données. Chaîne vide si aucun n'a été déposé.
+   *
+   * Il vit ici et non dans le résumé : un seul dossier le porte à la fois, alors que la
+   * liste en servirait autant qu'elle compte de lignes.
+   */
+  logo: string;
 }
 
 /**

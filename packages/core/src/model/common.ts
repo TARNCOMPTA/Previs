@@ -11,6 +11,25 @@ export const EXERCICES_MAX = 20;
 export const MOIS_MAX = 24;
 export const LIGNES_MAX = 500;
 
+/**
+ * Ampleur totale d'un dossier, tous chemins confondus.
+ *
+ * `LIGNES_MAX` est posé par liste, et il y a douze listes adressables : à lui seul, il
+ * laissait passer un dossier de vingt mégaoctets — mesuré, construit par l'API en
+ * cinquante-cinq requêtes toutes acceptées, chacune respectant chaque plafond documenté.
+ * Le relire coûtait alors 688 ms, le modifier d'une opération triviale 1 269 ms, et le
+ * serveur étant mono-fil, dix requêtes concurrentes immobilisaient la connexion elle-même.
+ * L'historique en gardait cent copies, soit deux gigaoctets pour un dossier.
+ *
+ * Les deux plafonds ci-dessous portent sur le dossier entier. Ils sont larges : un dossier
+ * réel de cabinet pèse 19 Ko à soixante lignes, et 176 Ko dans le cas extrême de cinq cents
+ * lignes sur dix exercices. Ce qu'ils arrêtent est le dossier qui n'en est plus un.
+ */
+export const LIGNES_TOTAL_MAX = 2000;
+
+/** Taille du dossier sérialisé, en octets. Huit fois le plus gros dossier plausible. */
+export const TAILLE_DOSSIER_MAX = 1_500_000;
+
 /** Identifiant stable d'une ligne. Généré côté client ou côté LLM. */
 export const zId = z.string().min(1).max(64);
 

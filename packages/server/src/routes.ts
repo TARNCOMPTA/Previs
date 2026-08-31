@@ -160,6 +160,53 @@ export function enregistrerRoutes(app: FastifyInstance, ctx: Contexte): void {
   // modèle du flux OAuth, pour qu'un anonyme ne puisse ni gonfler la table des défis
   // ni faire tourner la vérification en boucle.
   const debitCles = new LimiteurDebit(30, 15 * 60 * 1000);
+  /*
+   * Écriture et calcul d'un dossier : neuf cents par quart d'heure et par compte.
+   *
+   * Ces trois routes n'étaient bornées par rien, et ce sont les plus chères du service —
+   * chacune valide le dossier par zod, le calcule, et l'archive. Sur un dossier au plafond
+   * du modèle, une seule opération triviale coûte plus de cent millisecondes, dans un
+   * processus mono-fil où la route de connexion attend derrière.
+   *
+   * Le plafond est très au-dessus de ce qu'une saisie produit : l'interface enregistre au
+   * plus une fois toutes les huit cents millisecondes, et une séance continue d'un quart
+   * d'heure en demande quelques centaines. Il borne un appelant qui boucle, pas un
+   * comptable qui travaille.
+   */
+  const debitEcriture = new LimiteurDebit(900, 15 * 60 * 1000);
+
+  /** Refuse une écriture au-delà du plafond, et le dit dans les termes du contrat. */
+  const sousPlafondEcriture = (
+    identite: { utilisateur: { id: string } },
+    reponse: import('fastify').FastifyReply,
+  ): boolean => {
+    if (debitEcriture.autoriser(identite.utilisateur.id)) return true;
+    reponse.code(429).send({
+      erreur: 'Trop d’écritures demandées sur ce compte. Patienter quelques minutes.',
+      code: 'interdit',
+    });
+    return false;
+  };
+
+  /*
+   * Les trois routes qui portent un dossier complet, et les seules à dépasser le plafond
+   * global d'un mégaoctet. Deux mégaoctets laissent passer un dossier au plafond du modèle
+   * — 1,5 Mo — et son enveloppe, sans rien offrir de plus à qui voudrait faire détendre du
+   * gzip dans la boucle d'événements.
+   */
+  const CORPS_DOSSIER = { bodyLimit: 2 * 1024 * 1024 };
+
+  /*
+   * Ce que reçoit un point d'entrée joignable sans être authentifié.
+   *
+   * Le plafond de corps global borne déjà la détente d'un gzip, mais il la laisse courir
+   * jusqu'au mégaoctet : mesuré, 14 625 octets envoyés coûtaient encore 11 à 25 ms. Ces
+   * routes-là ne sont appelées que par l'interface, qui n'envoie jamais de corps comprimé —
+   * leur retirer la décompression ramène le coût à celui d'un corps ordinaire, et retire du
+   * même coup à un anonyme le seul amplificateur qu'il avait sous la main.
+   */
+  const CORPS_ANONYME = { bodyLimit: 64 * 1024, decompress: false as const };
+
 
   /**
    * Pose le cookie de session — un seul endroit, quel que soit le moyen employé.
@@ -183,7 +230,7 @@ export function enregistrerRoutes(app: FastifyInstance, ctx: Contexte): void {
   app.get('/api/sante', async () => ({ service: 'previs', etat: 'operationnel' }));
 
   // ─── Authentification ───────────────────────────────────────────────────────
-  app.post('/api/auth/connexion', async (requete, reponse) => {
+  app.post('/api/auth/connexion', CORPS_ANONYME, async (requete, reponse) => {
     const adresse = requete.ip;
     let compte = '';
     try {
@@ -431,7 +478,7 @@ export function enregistrerRoutes(app: FastifyInstance, ctx: Contexte): void {
     return { supprime: true };
   });
 
-  app.post('/api/auth/cles/connexion/options', async (requete, reponse) => {
+  app.post('/api/auth/cles/connexion/options', CORPS_ANONYME, async (requete, reponse) => {
     // Point d'entrée public : sans plafond, une boucle anonyme ferait grossir la table
     // des défis jusqu'à remplir le disque.
     if (!debitCles.autoriser(`defi:${requete.ip}`)) {
@@ -446,7 +493,7 @@ export function enregistrerRoutes(app: FastifyInstance, ctx: Contexte): void {
     }
   });
 
-  app.post('/api/auth/cles/connexion', async (requete, reponse) => {
+  app.post('/api/auth/cles/connexion', CORPS_ANONYME, async (requete, reponse) => {
     const adresse = requete.ip;
     if (parAdresse.bloque(adresse) || !debitCles.autoriser(`connexion:${adresse}`)) {
       return reponse.code(429).send({
@@ -500,9 +547,10 @@ export function enregistrerRoutes(app: FastifyInstance, ctx: Contexte): void {
     return ctx.depot.lister();
   });
 
-  app.post('/api/dossiers', async (requete, reponse) => {
+  app.post('/api/dossiers', CORPS_DOSSIER, async (requete, reponse) => {
     const identite = identifier(ctx.auth, requete);
     if (!exiger(identite, reponse, { ecriture: true })) return;
+    if (!sousPlafondEcriture(identite, reponse)) return;
     try {
       return await ctx.depot.creer(zRequeteCreation.parse(requete.body), auteurDe(identite));
     } catch (erreur) {
@@ -521,9 +569,10 @@ export function enregistrerRoutes(app: FastifyInstance, ctx: Contexte): void {
     return dossier;
   });
 
-  app.put('/api/dossiers/:id', async (requete, reponse) => {
+  app.put('/api/dossiers/:id', CORPS_DOSSIER, async (requete, reponse) => {
     const identite = identifier(ctx.auth, requete);
     if (!exiger(identite, reponse, { ecriture: true })) return;
+    if (!sousPlafondEcriture(identite, reponse)) return;
     try {
       const { id } = requete.params as { id: string };
       return await ctx.depot.enregistrer(
@@ -536,9 +585,10 @@ export function enregistrerRoutes(app: FastifyInstance, ctx: Contexte): void {
     }
   });
 
-  app.patch('/api/dossiers/:id', async (requete, reponse) => {
+  app.patch('/api/dossiers/:id', CORPS_DOSSIER, async (requete, reponse) => {
     const identite = identifier(ctx.auth, requete);
     if (!exiger(identite, reponse, { ecriture: true })) return;
+    if (!sousPlafondEcriture(identite, reponse)) return;
     try {
       const { id } = requete.params as { id: string };
       return await ctx.depot.appliquer(id, zRequetePatch.parse(requete.body), auteurDe(identite));
@@ -610,6 +660,9 @@ export function enregistrerRoutes(app: FastifyInstance, ctx: Contexte): void {
   app.post('/api/dossiers/:id/calculer', async (requete, reponse) => {
     const identite = identifier(ctx.auth, requete);
     if (!exiger(identite, reponse)) return;
+    // Le calcul est en lecture, mais il coûte autant qu'une écriture : il puise donc dans
+    // le même budget. Un compte « lecteur » y avait accès sans aucun plafond.
+    if (!sousPlafondEcriture(identite, reponse)) return;
     try {
       const { id } = requete.params as { id: string };
       return await ctx.depot.calculer(id);
