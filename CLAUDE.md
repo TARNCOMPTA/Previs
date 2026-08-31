@@ -177,7 +177,7 @@ premier démarrage, tout le reste vient de l'écran Administration.
 
 ```bash
 npm run typecheck      # les quatre paquets
-npm test               # 81 essais du moteur, 246 du serveur, 11 du magasin de l'interface
+npm test               # 81 essais du moteur, 255 du serveur, 11 du magasin de l'interface
 npm run build
 ```
 
@@ -256,7 +256,7 @@ connexion par adresse **et** par compte. Ne jamais consigner un mot de passe, un
 jeton en clair ou le contenu d'un dossier dans les journaux. Le serveur refuse de
 démarrer en production sans `SESSION_SECRET`.
 
-Dix règles à ne pas défaire :
+Douze règles à ne pas défaire :
 
 1. **Un chemin d'opération est borné.** `resoudreChemin()` n'accepte que les sept
    sections du dossier, refuse `__proto__`, `prototype` et `constructor`, et ne
@@ -288,11 +288,14 @@ Dix règles à ne pas défaire :
    porteur annoncé est exigé et rapproché de la clé trouvée en base. La vérification du
    porteur est exigée. Le compteur est laissé à la bibliothèque : exiger une progression
    stricte casserait toutes les clés synchronisées, qui rapportent zéro à vie.
-7. **Poser une clé d'accès exige le mot de passe actuel, et une session de l'interface.**
+7. **Changer un mot de passe — le sien — exige le mot de passe actuel, et poser une clé
+   d'accès exige en plus une session de l'interface.**
    `exiger({ navigateur: true })` refuse un jeton d'API — qui vit en clair dans un fichier
    de configuration — sur le mot de passe comme sur les clés. Sans la preuve fraîche, une
    session dérobée deviendrait un accès durable qu'un changement de mot de passe ne
-   refermerait pas.
+   refermerait pas. `PATCH /api/utilisateurs/:id` porte la même exigence lorsqu'il vise le
+   compte de l'appelant, et sur le MÊME compteur que la route dédiée : deux clés distinctes
+   offriraient deux budgets d'essais du même secret.
 
 8. **Ce qu'un anonyme peut faire coûter est borné avant l'analyse du corps.** Le plafond de
    corps global vaut un mégaoctet, et non seize : la limitation de débit vit dans le
@@ -317,6 +320,17 @@ Dix règles à ne pas défaire :
    `verifierAmpleurDossier()` est appelée depuis `ecrire()` et `creer()`, jamais à la
    lecture — un dossier déjà en base doit rester consultable. Et l'écriture est plafonnée en
    débit comme l'export PDF l'était.
+
+11. **Une erreur imprévue ne raconte rien de l'installation.** `app.setErrorHandler` renvoie
+    tout à `repondreErreur` : quinze routes n'avaient pas de `try/catch`, et le gestionnaire
+    par défaut de Fastify recopiait le message brut — « SQLITE_ERROR: no such column: x —
+    /opt/previs/data/previs.db », avec le code du pilote dans le champ `code` du contrat.
+    Les erreurs de transport, elles, gardent leur statut : elles ne révèlent rien.
+12. **La révocation en cascade n'est atteignable que par le client concerné.** Le contrôle
+    d'appartenance passe AVANT la détection du rejeu, dans `consommerCode` comme dans
+    `rafraichir` : sinon, qui détient une valeur morte — un code déjà consommé traînant dans
+    l'historique d'un navigateur — coupe l'accès d'un compte sans connaître aucun secret
+    vivant.
 
 `packages/core/test/securite.test.ts`, `packages/server/test/securite.test.ts`,
 `packages/server/test/oauth.test.ts` et `packages/server/test/cles.test.ts` verrouillent

@@ -910,3 +910,50 @@ describe('portée du jeton d’accès', () => {
     }
   });
 });
+
+describe('la révocation en cascade n’est pas déclenchable par un tiers', () => {
+  /*
+   * La détection du rejeu révoque toute la lignée du compte pour ce client — c'est la
+   * règle, et elle est juste. Mais l'effet de bord était atteint AVANT le contrôle
+   * d'appartenance au client : qui détenait une valeur morte — un code déjà consommé qui
+   * traîne dans l'historique d'un navigateur ou dans les journaux d'un client — pouvait
+   * couper l'accès d'un compte sans connaître le moindre secret vivant, ni même
+   * l'identifiant du client.
+   */
+  it('un code rejoué par un autre client est refusé sans rien révoquer', async () => {
+    // Un consentement complet, échangé : le couple de jetons est vivant.
+    const { verificateur, defi } = pkce();
+    const code = parametresDe((await obtenirCode({ defi })).localisation).get('code')!;
+    const jetons = (await echangerCode({ code, verificateur })).json();
+    expect(application.oauth.parJetonAcces(jetons.access_token as string)).not.toBeNull();
+
+    // Un second client, qui n'a rien à voir, présente le code déjà consommé.
+    const autre = await app.inject({
+      method: 'POST',
+      url: '/oauth/enregistrer',
+      payload: { redirect_uris: [REDIRECTION], client_name: 'Client tiers' },
+    });
+    const refus = await echangerCode({
+      code,
+      verificateur,
+      client: autre.json().client_id as string,
+    });
+    expect(refus.statusCode).toBe(400);
+    expect(refus.json().error).toBe('invalid_grant');
+
+    // Et l'accès du client légitime tient toujours : rien n'a été révoqué.
+    expect(application.oauth.parJetonAcces(jetons.access_token as string)).not.toBeNull();
+  });
+
+  it('mais le même client qui rejoue son code perd bien toute sa lignée', async () => {
+    const { verificateur, defi } = pkce();
+    const code = parametresDe((await obtenirCode({ defi })).localisation).get('code')!;
+    const jetons = (await echangerCode({ code, verificateur })).json();
+    expect(application.oauth.parJetonAcces(jetons.access_token as string)).not.toBeNull();
+
+    const rejeu = await echangerCode({ code, verificateur });
+    expect(rejeu.statusCode).toBe(400);
+    // C'est le seul moyen de constater une fuite : la lignée tombe.
+    expect(application.oauth.parJetonAcces(jetons.access_token as string)).toBeNull();
+  });
+});

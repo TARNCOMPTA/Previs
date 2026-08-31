@@ -59,8 +59,15 @@ interface Contexte {
   debitPdf: LimiteurDebit;
 }
 
-/** Convertit une erreur métier du dépôt en réponse HTTP conforme au contrat. */
-function repondreErreur(
+/**
+ * Convertit une erreur métier du dépôt en réponse HTTP conforme au contrat.
+ *
+ * Exportée pour servir de gestionnaire d'erreur global : les blocs `try/catch` des routes
+ * donnent le bon code métier, mais quinze routes n'en avaient pas, et le gestionnaire par
+ * défaut de Fastify recopiait alors le message brut — un chemin de base, un fragment SQL,
+ * ou le vidage d'une anomalie zod portant la valeur trouvée dans le dossier d'un client.
+ */
+export function repondreErreur(
   erreur: unknown,
   reponse: import('fastify').FastifyReply,
   production = true,
@@ -910,6 +917,8 @@ export function enregistrerRoutes(app: FastifyInstance, ctx: Contexte): void {
           role: z.enum(['admin', 'collaborateur', 'lecteur']).optional(),
           actif: z.boolean().optional(),
           motDePasse: z.string().min(10).max(200).optional(),
+          /** Mot de passe actuel, exigé quand l'appelant change le SIEN. */
+          ancien: z.string().max(200).optional(),
         })
         .parse(requete.body);
 
@@ -947,6 +956,39 @@ export function enregistrerRoutes(app: FastifyInstance, ctx: Contexte): void {
         if (!entree.actif) ctx.base.prepare('DELETE FROM sessions WHERE utilisateur_id = ?').run(id);
       }
       if (entree.motDePasse !== undefined) {
+        /*
+         * Changer SON PROPRE mot de passe exige le mot de passe actuel, ici comme sur la
+         * route dédiée. C'est la septième règle du projet, prise par l'autre bout : sans la
+         * preuve fraîche, une session d'administrateur dérobée se convertissait en deux
+         * requêtes — un mot de passe choisi, puis une connexion normale — et le titulaire
+         * légitime se retrouvait verrouillé hors de son propre compte.
+         *
+         * Le compteur est celui de la route sœur, et non un second : deux clés distinctes
+         * offriraient deux budgets d'essais du même secret.
+         */
+        if (id === identite.utilisateur.id) {
+          const cle = `motdepasse:${id}`;
+          if (parCompte.bloque(cle)) {
+            return reponse.code(429).send({
+              erreur: 'Trop de tentatives. Réessayer dans quelques minutes.',
+              code: 'interdit',
+            });
+          }
+          const verifie =
+            typeof entree.ancien === 'string' && entree.ancien.length > 0
+              ? await ctx.auth.verifierIdentifiants(identite.utilisateur.email, entree.ancien)
+              : false;
+          if (!verifie) {
+            parCompte.echec(cle);
+            return reponse.code(401).send({
+              erreur:
+                'Changer son propre mot de passe exige le mot de passe actuel, dans le champ ' +
+                '« ancien ».',
+              code: 'identifiant_refuse',
+            });
+          }
+          parCompte.succes(cle);
+        }
         await ctx.auth.changerMotDePasse(id, entree.motDePasse);
         // Même raison que pour un changement par le titulaire : un connecteur autorisé
         // avec l'ancien mot de passe garderait trente jours d'accès aux dossiers.
@@ -959,7 +1001,15 @@ export function enregistrerRoutes(app: FastifyInstance, ctx: Contexte): void {
         action: 'modification_compte',
         cible: id,
         // Le mot de passe lui-même n'est jamais consigné, seulement le fait du changement.
-        detail: Object.keys(entree).join(', '),
+        // Et l'on dit ce que le changement ne referme PAS : les clés d'accès de la cible ne
+        // dépendent pas du mot de passe et survivent, ce qu'un administrateur qui réagit à
+        // une compromission doit savoir.
+        detail:
+          entree.motDePasse !== undefined && id !== identite.utilisateur.id
+            ? `${Object.keys(entree).filter((c) => c !== 'ancien').join(', ')} — les clés d’accès du compte survivent au changement`
+            : Object.keys(entree)
+                .filter((c) => c !== 'ancien')
+                .join(', '),
       });
 
       const utilisateur = ctx.auth.lireUtilisateur(id);

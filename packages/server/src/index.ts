@@ -14,7 +14,7 @@ import { monterMcpHttp } from './mcpHttp.js';
 import { ServiceOauth } from './oauth.js';
 import { enregistrerRoutesOauth } from './oauthRoutes.js';
 import { eprouverSortiePdf, fermerNavigateur } from './pdf/index.js';
-import { enregistrerRoutes } from './routes.js';
+import { enregistrerRoutes, repondreErreur } from './routes.js';
 import { LimiteurDebit } from './securite.js';
 
 export interface Application {
@@ -61,6 +61,30 @@ export async function construireApplication(config: Configuration): Promise<Appl
   });
 
   ajouterEntetesSecurite(app, config);
+
+  /*
+   * Le dernier filet : une route qui lève sans `try/catch` passait par le gestionnaire par
+   * défaut de Fastify, qui recopie le message de l'erreur dans la réponse. Mesuré en
+   * production : « SQLITE_ERROR: no such column: x — /opt/previs/data/previs.db ». Les
+   * blocs `try/catch` des routes restent utiles — ils donnent le bon code métier — mais
+   * cessent d'être la seule barrière, y compris pour les routes à venir.
+   */
+  app.setErrorHandler((erreur, _requete, reponse) => {
+    /*
+     * Les erreurs de TRANSPORT de Fastify — corps trop gros, encodage non accepté, JSON
+     * malformé — portent déjà le bon statut et ne révèlent rien de l'installation. On garde
+     * leur statut, et on leur donne la forme du contrat, que le gestionnaire par défaut ne
+     * respectait pas : il rendait « {statusCode, error, message} » là où l'interface attend
+     * « {erreur, code} ».
+     */
+    const statut = (erreur as { statusCode?: number }).statusCode;
+    if (typeof statut === 'number' && statut >= 400 && statut < 500) {
+      const message = erreur instanceof Error ? erreur.message : 'Requête refusée.';
+      reponse.code(statut).send({ erreur: message, code: 'donnees_invalides' });
+      return;
+    }
+    repondreErreur(erreur, reponse, config.production);
+  });
 
   // Un export lance un rendu Chromium : trente par quart d'heure et par compte. Le
   // compteur est créé ici, et non dans les routes, parce qu'il doit être le MÊME pour la

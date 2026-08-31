@@ -982,3 +982,167 @@ describe('la suppression d’un dossier client laisse une trace nominative', () 
     expect(trace!.detail).toBe('À supprimer');
   });
 });
+
+describe('une erreur imprévue ne raconte rien de l’installation', () => {
+  /*
+   * `repondreErreur` prend soin de masquer l'imprévu en production, mais quinze routes
+   * n'avaient pas de bloc `try/catch` et ne passaient donc jamais par elle. Le gestionnaire
+   * par défaut de Fastify recopiait alors le message brut : mesuré,
+   * « SQLITE_ERROR: no such column: x — /opt/previs/data/previs.db ». Un compte en lecture
+   * seule, ou un assistant connecté par OAuth, obtenait le chemin de la base et le fragment
+   * SQL fautif ; sur le chemin zod, le vidage des anomalies, avec la valeur trouvée dans le
+   * dossier d'un client.
+   */
+  it('une panne interne ne rend ni chemin de fichier ni fragment SQL', async () => {
+    // Une route SANS bloc try/catch — il y en avait quinze — que l'on fait échouer au
+    // niveau du moteur SQL. Sans gestionnaire global, Fastify recopiait le message :
+    // « SQLITE_ERROR: no such column: x — /opt/previs/data/previs.db ».
+    application.base.exec('ALTER TABLE dossiers RENAME TO dossiers_deplacee');
+    try {
+      const r = await app.inject({
+        method: 'GET',
+        url: '/api/dossiers',
+        headers: { [ENTETE_JETON]: jetonAdmin },
+      });
+      expect(r.statusCode).toBe(500);
+      expect(r.json().code).toBe('erreur_interne');
+      expect(r.body).not.toMatch(/SQLITE|no such table|dossiers_deplacee|\.db/);
+      // La forme du contrat, et non « {statusCode, error, message} ».
+      expect(r.json()).not.toHaveProperty('statusCode');
+    } finally {
+      application.base.exec('ALTER TABLE dossiers_deplacee RENAME TO dossiers');
+    }
+  });
+
+  it('un dossier illisible rend 422, et non un 500 nu', async () => {
+    const cree = await app.inject({
+      method: 'POST',
+      url: '/api/dossiers',
+      headers: { [ENTETE_JETON]: jetonAdmin },
+      payload: { nom: 'Écrit par une version antérieure', modele: 'IS' },
+    });
+    const id = cree.json().id as string;
+
+    // Un contenu tel qu'en produirait une version antérieure du modèle : le régime porte
+    // une valeur que le schéma actuel ne connaît plus. `GET /api/dossiers/:id` n'avait pas
+    // de try/catch et rendait la ZodError sérialisée dans un 500.
+    const contenu = JSON.parse(
+      (application.base.prepare('SELECT contenu FROM dossiers WHERE id = ?').get(id) as {
+        contenu: string;
+      }).contenu,
+    ) as { identite: { regime: string } };
+    contenu.identite.regime = 'IS_ANCIEN_REGIME';
+    application.base
+      .prepare('UPDATE dossiers SET contenu = ? WHERE id = ?')
+      .run(JSON.stringify(contenu), id);
+
+    const r = await app.inject({
+      method: 'GET',
+      url: `/api/dossiers/${id}`,
+      headers: { [ENTETE_JETON]: jetonAdmin },
+    });
+    expect(r.statusCode).toBe(422);
+    expect(r.json().code).toBe('donnees_invalides');
+    expect(r.json().erreur).toBe('Les données transmises ne respectent pas le format attendu.');
+  });
+
+  it('les erreurs de transport gardent leur statut et la forme du contrat', async () => {
+    const malforme = await app.inject({
+      method: 'POST',
+      url: '/api/dossiers',
+      headers: { [ENTETE_JETON]: jetonAdmin, 'content-type': 'application/json' },
+      payload: '{"nom": ',
+    });
+    expect(malforme.statusCode).toBe(400);
+    // La forme que l'interface sait lire, et non « {statusCode, error, message} ».
+    expect(malforme.json()).toHaveProperty('erreur');
+    expect(malforme.json()).toHaveProperty('code');
+    expect(malforme.json()).not.toHaveProperty('statusCode');
+  });
+});
+
+describe('un administrateur ne change pas son propre mot de passe sans l’ancien', () => {
+  /*
+   * La septième règle du projet, prise par l'autre bout. `POST /api/auth/motdepasse` exige
+   * le mot de passe actuel ; `PATCH /api/utilisateurs/:id` ne l'exigeait pas, pour aucun
+   * compte — y compris celui de l'appelant. Une session d'administrateur dérobée se
+   * convertissait donc en deux requêtes : un mot de passe choisi, puis une connexion
+   * normale. Le titulaire légitime, lui, se retrouvait verrouillé hors de son compte.
+   */
+  async function moi(): Promise<string> {
+    const r = await app.inject({ method: 'GET', url: '/api/auth/moi', headers: { cookie: cookieAdmin } });
+    return r.json().utilisateur.id as string;
+  }
+
+  it('sans « ancien », le changement est refusé', async () => {
+    const r = await app.inject({
+      method: 'PATCH',
+      url: `/api/utilisateurs/${await moi()}`,
+      headers: { cookie: cookieAdmin, origin: ORIGINE },
+      payload: { motDePasse: 'un-mot-de-passe-choisi-par-le-voleur' },
+    });
+    expect(r.statusCode).toBe(401);
+    expect(r.json().code).toBe('identifiant_refuse');
+
+    // Et l'ancien mot de passe fonctionne toujours : rien n'a été changé.
+    const connexion = await app.inject({
+      method: 'POST',
+      url: '/api/auth/connexion',
+      payload: { email: 'admin@tarncompta.fr', motDePasse: MOT_DE_PASSE },
+      remoteAddress: '10.8.8.1',
+    });
+    expect(connexion.statusCode).toBe(200);
+  });
+
+  it('avec un « ancien » faux, il est refusé aussi', async () => {
+    const r = await app.inject({
+      method: 'PATCH',
+      url: `/api/utilisateurs/${await moi()}`,
+      headers: { cookie: cookieAdmin, origin: ORIGINE },
+      payload: { motDePasse: 'un-autre-mot-de-passe-choisi', ancien: 'ce-n-est-pas-le-bon' },
+    });
+    expect(r.statusCode).toBe(401);
+  });
+
+  it('les autres champs du compte restent modifiables sans mot de passe', async () => {
+    const r = await app.inject({
+      method: 'PATCH',
+      url: `/api/utilisateurs/${await moi()}`,
+      headers: { cookie: cookieAdmin, origin: ORIGINE },
+      payload: { nom: 'Aymeric HANGARD' },
+    });
+    expect(r.statusCode).toBe(200);
+    expect(r.json().nom).toBe('Aymeric HANGARD');
+  });
+
+  it('et réinitialiser le mot de passe d’un AUTRE compte reste possible, en le disant', async () => {
+    const cible = await app.inject({
+      method: 'POST',
+      url: '/api/utilisateurs',
+      headers: { cookie: cookieAdmin, origin: ORIGINE },
+      payload: {
+        email: 'collegue@tarncompta.fr',
+        nom: 'Collègue',
+        motDePasse: 'motdepasse-du-collegue-2026',
+        role: 'collaborateur',
+      },
+    });
+    const id = cible.json().id as string;
+    const r = await app.inject({
+      method: 'PATCH',
+      url: `/api/utilisateurs/${id}`,
+      headers: { cookie: cookieAdmin, origin: ORIGINE },
+      payload: { motDePasse: 'mot-de-passe-reinitialise-2026' },
+    });
+    expect(r.statusCode).toBe(200);
+
+    // Le journal dit ce que le changement ne referme PAS.
+    const trace = application.base
+      .prepare(
+        "SELECT detail FROM journal_audit WHERE action = 'modification_compte' AND cible = ? ORDER BY id DESC",
+      )
+      .get(id) as { detail: string } | undefined;
+    expect(trace!.detail).toMatch(/clés d’accès du compte survivent/);
+    expect(trace!.detail).not.toContain('ancien');
+  });
+});

@@ -227,6 +227,19 @@ export class ServiceOauth {
 
     if (!ligne) throw new ErreurOauth('invalid_grant', 'Code d’autorisation inconnu.');
 
+    /*
+     * L'appartenance au client est vérifiée AVANT le rejeu, et l'ordre compte.
+     *
+     * La révocation de la lignée est un effet de bord : la déclencher sur la seule
+     * présentation d'un code déjà consommé donnait à quiconque détient une valeur morte —
+     * un code qui traîne dans l'historique d'un navigateur ou dans les journaux d'un
+     * client — le moyen de couper l'accès du compte sans connaître le moindre secret
+     * vivant, ni même l'identifiant du client.
+     */
+    if (ligne.client_id !== entree.clientId) {
+      throw new ErreurOauth('invalid_grant', 'Ce code n’a pas été émis pour ce client.');
+    }
+
     if (ligne.consomme_le) {
       // Un code rejoué signale une interception : tout ce qui a été émis pour ce
       // compte et ce client est révoqué, plutôt que d'attendre l'expiration.
@@ -235,9 +248,6 @@ export class ServiceOauth {
     }
     if (ligne.expire_le <= new Date().toISOString()) {
       throw new ErreurOauth('invalid_grant', 'Code d’autorisation expiré.');
-    }
-    if (ligne.client_id !== entree.clientId) {
-      throw new ErreurOauth('invalid_grant', 'Ce code n’a pas été émis pour ce client.');
     }
     if (ligne.redirect_uri !== entree.redirectUri) {
       throw new ErreurOauth('invalid_grant', 'L’adresse de redirection ne correspond pas à celle du code.');
@@ -330,6 +340,11 @@ export class ServiceOauth {
       | undefined;
 
     if (!ligne) throw new ErreurOauth('invalid_grant', 'Jeton de rafraîchissement inconnu.');
+    // Même ordre que pour le code : l'effet de bord de la révocation ne doit pas être
+    // atteignable par qui présente une valeur morte sans connaître le client.
+    if (ligne.client_id !== entree.clientId) {
+      throw new ErreurOauth('invalid_grant', 'Ce jeton n’a pas été émis pour ce client.');
+    }
     if (ligne.revoque_le) {
       this.revoquerPourClient(ligne.utilisateur_id, ligne.client_id);
       throw new ErreurOauth(
@@ -339,9 +354,6 @@ export class ServiceOauth {
     }
     if (ligne.expire_le <= new Date().toISOString()) {
       throw new ErreurOauth('invalid_grant', 'Jeton de rafraîchissement expiré.');
-    }
-    if (ligne.client_id !== entree.clientId) {
-      throw new ErreurOauth('invalid_grant', 'Ce jeton n’a pas été émis pour ce client.');
     }
 
     const maintenant = new Date().toISOString();
