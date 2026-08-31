@@ -14,7 +14,8 @@ npm-debug.log*
 *.db-wal
 *.db-shm
 data/uploads/
-data/etat-pdf
+# Verdict de la sortie PDF, écrit au démarrage du serveur, à quelque profondeur qu'il soit.
+etat-pdf
 sauvegardes/
 premier-acces.txt
 chromium/

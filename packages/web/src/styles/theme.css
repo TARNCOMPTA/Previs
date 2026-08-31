@@ -282,10 +282,19 @@ table.grille th:first-child, table.etat th:first-child { text-align: left; }
  * Deux cas, d'où la classe « avec-detail » : une grille dépliable porte d'abord une colonne
  * de chevron large de 28 px, et c'est alors la deuxième colonne qui porte l'intitulé.
  */
-table.grille td:first-child,
-table.grille th:first-child,
-table.grille.avec-detail td:nth-child(2),
-table.grille.avec-detail th:nth-child(2) {
+/*
+ * Le « :not([colspan]) » n'est pas décoratif.
+ *
+ * Trois cellules d'une grille sont des « td colspan » et sont donc, elles aussi, la première
+ * de leur rangée : le message « Aucun investissement saisi », le panneau de détail déplié et
+ * la rangée de total. Sans l'exclusion, elles héritaient du calage et du garnissage nul de la
+ * colonne figée : le message perdait ses 28 px de garnissage (vérifié — il tombait à 3 px)
+ * et le panneau de détail devenait un bloc collant large de toute la table.
+ */
+table.grille thead th:first-child,
+table.grille tbody td:first-child:not([colspan]),
+table.grille.avec-detail thead th:nth-child(2),
+table.grille.avec-detail tbody tr > td:nth-child(2):not([colspan]) {
   position: sticky;
   left: 0;
   z-index: 1;
@@ -295,24 +304,30 @@ table.grille.avec-detail th:nth-child(2) {
  * de caler l'intitulé à « left: 28px » au pixel. Avec le garnissage de 8 px des autres
  * cellules, sa boîte en ferait 44 et l'intitulé se décalerait de seize pixels au défilement.
  */
-table.grille.avec-detail td:first-child,
-table.grille.avec-detail th:first-child { width: 28px; padding-left: 0; padding-right: 0; }
-table.grille.avec-detail td:nth-child(2), table.grille.avec-detail th:nth-child(2) { left: 28px; }
-table.grille th:first-child, table.grille.avec-detail th:nth-child(2) { z-index: 3; }
+table.grille.avec-detail thead th:first-child,
+table.grille.avec-detail tbody td:first-child:not([colspan]) {
+  width: 28px;
+  padding-left: 0;
+  padding-right: 0;
+}
+table.grille.avec-detail thead th:nth-child(2),
+table.grille.avec-detail tbody tr > td:nth-child(2):not([colspan]) { left: 28px; }
+table.grille thead th:first-child,
+table.grille.avec-detail thead th:nth-child(2) { z-index: 3; }
 
 /* Un fond opaque, sans quoi les cellules défilantes passeraient dessous en transparence. */
-table.grille tbody td:first-child,
-table.grille.avec-detail tbody td:nth-child(2) { background: var(--surface); }
-table.grille tbody tr:nth-child(even) > td:first-child,
-table.grille.avec-detail tbody tr:nth-child(even) > td:nth-child(2) { background: var(--surface-2); }
-table.grille tbody tr:hover > td:first-child,
-table.grille.avec-detail tbody tr:hover > td:nth-child(2) { background: var(--bleu-clair); }
+table.grille tbody td:first-child:not([colspan]),
+table.grille.avec-detail tbody tr > td:nth-child(2):not([colspan]) { background: var(--surface); }
+table.grille tbody tr:nth-child(even) > td:first-child:not([colspan]),
+table.grille.avec-detail tbody tr:nth-child(even) > td:nth-child(2):not([colspan]) { background: var(--surface-2); }
+table.grille tbody tr:hover > td:first-child:not([colspan]),
+table.grille.avec-detail tbody tr:hover > td:nth-child(2):not([colspan]) { background: var(--bleu-clair); }
 
 /* Le filet qui marque la limite de la partie figée. */
-table.grille td:first-child::after,
-table.grille th:first-child::after,
-table.grille.avec-detail td:nth-child(2)::after,
-table.grille.avec-detail th:nth-child(2)::after {
+table.grille thead th:first-child::after,
+table.grille tbody td:first-child:not([colspan])::after,
+table.grille.avec-detail thead th:nth-child(2)::after,
+table.grille.avec-detail tbody tr > td:nth-child(2):not([colspan])::after {
   content: '';
   position: absolute;
   top: 0;
@@ -322,8 +337,8 @@ table.grille.avec-detail th:nth-child(2)::after {
   background: var(--trait);
 }
 /* Sur une grille dépliable, le filet n'appartient qu'à la colonne d'intitulés. */
-table.grille.avec-detail td:first-child::after,
-table.grille.avec-detail th:first-child::after { display: none; }
+table.grille.avec-detail thead th:first-child::after,
+table.grille.avec-detail tbody td:first-child:not([colspan])::after { display: none; }
 table.grille td, table.etat td {
   padding: 3px 8px;
   border-bottom: 1px solid var(--trait);
@@ -370,13 +385,26 @@ tr.ligne-llm > td:first-child { box-shadow: inset 3px 0 0 var(--llm); }
 .defilement-horizontal table.grille { min-width: max-content; }
 .defilement-horizontal table.etat { min-width: min-content; }
 /*
- * Plancher de la colonne d'intitulés d'un état.
+ * Plancher de la colonne d'intitulés d'un état, de la même portée que le resserrement.
  *
  * Sans lui, le resserrement la ramenait à son mot le plus long et « Total des produits
  * d'exploitation » s'étalait sur trois lignes : un tableau financier se lit par rangées,
  * et une rangée haute de trois lignes se suit mal de l'œil. Le tableau défile plutôt.
+ *
+ * Le sélecteur est bien porté par « .defilement-horizontal », comme le resserrement qu'il
+ * compense : sans cette portée il élargissait aussi la colonne « Version » de l'historique
+ * des versions, qui n'est pas enveloppée et n'a rien à resserrer. Vérifié — elle mesurait
+ * 190 px pour un numéro de version.
  */
-table.etat th:first-child, table.etat td:first-child { min-width: 190px; }
+.defilement-horizontal table.etat th:first-child,
+.defilement-horizontal table.etat td:first-child { min-width: 190px; }
+
+/*
+ * Dans une cellule de tableau, « table.grille td » (spécificité 0,1,2) l'emportait sur
+ * « .zone-vide » (0,1,0) : le message d'une grille vide héritait du garnissage serré des
+ * cellules de chiffres, 3 px au lieu de 28. C'est ce qu'on voit d'abord d'un dossier neuf.
+ */
+table.grille td.zone-vide, table.etat td.zone-vide { padding: 28px 16px; }
 
 .zone-vide {
   padding: 28px 16px;
@@ -454,18 +482,15 @@ table.etat th:first-child, table.etat td:first-child { min-width: 190px; }
 }
 
 /*
- * Sous 1180 px, deux volets ne tiennent plus : le tableau d'état mesure au moins 400 px
- * et la grille de saisie 520 px, poignée comprise. La vue scindée se replie alors d'elle-même
- * en une colonne, le résultat sous la saisie — c'est la coquille qui décide, cette règle
- * n'est qu'un filet de sécurité pour un redimensionnement en cours de route.
+ * Pas de règle de média pour le repli, et c'est délibéré.
+ *
+ * C'est la coquille qui décide : sous 1 180 px elle démonte le volet de résultat et rend la
+ * navigation latérale (LARGEUR_MINIMALE_SCISSION, CoquilleDossier.tsx). Une règle de média
+ * qui prétendait « replier en colonne » a existé ici : elle ne repliait rien, faute d'un
+ * « flex-direction: column » que rien dans le paquet ne posait — elle écrasait simplement
+ * les deux volets côte à côte. Deux mécanismes pour un seul repli, dont un qui n'agit pas :
+ * il n'en reste qu'un.
  */
-@media (max-width: 1179px) {
-  .volet-droit {
-    width: auto;
-    border-left: none;
-    border-top: 1px solid var(--trait);
-  }
-}
 
 @media print {
   .sans-impression { display: none !important; }

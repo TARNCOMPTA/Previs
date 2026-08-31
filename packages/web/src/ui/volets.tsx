@@ -20,7 +20,7 @@ export function DeuxVolets({
   cle,
   largeurDroiteParDefaut = 560,
   minGauche = 520,
-  minDroite = 380,
+  minDroite = 400,
 }: {
   gauche: ReactNode;
   droite: ReactNode;
@@ -28,6 +28,7 @@ export function DeuxVolets({
   cle: string;
   largeurDroiteParDefaut?: number;
   minGauche?: number;
+  /** 400 px : le plus étroit des tableaux d'état, le bilan, en demande 403 mesurés. */
   minDroite?: number;
 }) {
   const conteneur = useRef<HTMLDivElement>(null);
