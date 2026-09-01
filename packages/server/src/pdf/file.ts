@@ -9,11 +9,14 @@
 /**
  * File d'attente à jetons : au plus `simultanees` impressions à la fois.
  *
- * Mesuré : un export consomme environ 160 Mo de pointe. Sans plafond, les trente exports
- * qu'autorise la limitation de débit par quart d'heure pouvaient partir ensemble et
- * réclamer près de cinq gigaoctets — le VPS n'en a pas tant, et c'est l'OOM. Deux à la
- * fois tiennent dans 400 Mo ; les suivants attendent leur tour, ce qui est très
- * préférable à un serveur abattu.
+ * Mesuré en PSS cumulé de l'arbre Chromium — la somme des RSS compte la mémoire partagée
+ * une fois par processus et double le résultat : le navigateur partagé pèse 242 Mo à lui
+ * seul, et un export en vol ajoute 127 Mo par-dessus (pointe à 369). Le plafond porte donc
+ * sur le surcoût, pas sur le coût total : deux exports simultanés demandent 500 Mo, non
+ * 250. Sans plafond, les trente exports qu'autorise la limitation de débit par quart
+ * d'heure pouvaient partir ensemble et réclamer quatre gigaoctets — le VPS n'en a pas tant,
+ * et c'est l'OOM. Les suivants attendent leur tour, ce qui est très préférable à un serveur
+ * abattu.
  */
 export class FileImpressions {
   private enCours = 0;

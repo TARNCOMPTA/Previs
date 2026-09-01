@@ -151,8 +151,9 @@ const DELAI_IMPRESSION = 60_000;
  * la marge basse. Il figure sur les vingt-six pages, couverture comprise ; c'est la
  * feuille de style qui lui réserve sa bande sur les pages à fond perdu.
  *
- * Deux plafonds encadrent ce chemin, tous deux dans « file.ts » : deux impressions à la
- * fois au plus, et soixante secondes par impression.
+ * Deux plafonds encadrent ce chemin : deux impressions à la fois au plus, et soixante
+ * secondes par impression. « file.ts » porte les deux mécanismes, mais aucune des deux
+ * valeurs : elles sont posées juste au-dessus, au point d'appel.
  */
 export async function genererPdf(
   dossier: Dossier,

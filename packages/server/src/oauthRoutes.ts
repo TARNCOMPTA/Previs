@@ -247,6 +247,16 @@ export async function enregistrerRoutesOauth(app: FastifyInstance, ctx: Contexte
     // reste enfermé dans cette portée — l'API, elle, doit continuer de refuser un corps
     // de formulaire, car c'est le seul corps qu'une page tierce puisse envoyer sans
     // présentation préalable.
+    // Aucun des quatre POST de cette portée n'est joignable avec une identité déjà établie :
+    // l'enregistrement de client, l'émission de jetons et la révocation n'en demandent
+    // aucune, et le formulaire de consentement est justement l'étape qui la crée. Ils
+    // refusent donc la décompression, comme les trois routes anonymes de l'API : le crochet
+    // de détente de « @fastify/compress » précède le gestionnaire, donc tout contrôle, et
+    // quatorze kilo-octets de gzip s'y détendaient en quatorze mégaoctets. Le plafond de
+    // corps est posé ici aussi : celui du parseur de formulaire ne borne que le formulaire,
+    // et un corps JSON retombait sur le mégaoctet global.
+    const CORPS_OAUTH = { bodyLimit: 64 * 1024, decompress: false as const };
+
     portee.addContentTypeParser(
       'application/x-www-form-urlencoded',
       { parseAs: 'string', bodyLimit: 64 * 1024 },
@@ -315,7 +325,7 @@ export async function enregistrerRoutesOauth(app: FastifyInstance, ctx: Contexte
     }
 
     // ─── Enregistrement dynamique d'un client (RFC 7591) ───────────────────────
-    portee.post('/oauth/enregistrer', async (requete, reponse) => {
+    portee.post('/oauth/enregistrer', CORPS_OAUTH, async (requete, reponse) => {
       if (!debitAnonyme.autoriser(`enr:${requete.ip}`)) {
         return erreurOauth(
           reponse,
@@ -418,7 +428,7 @@ export async function enregistrerRoutesOauth(app: FastifyInstance, ctx: Contexte
     });
 
     // ─── Autorisation : traitement du formulaire ───────────────────────────────
-    portee.post('/oauth/autoriser', async (requete, reponse) => {
+    portee.post('/oauth/autoriser', CORPS_OAUTH, async (requete, reponse) => {
       const corps = (requete.body ?? {}) as Record<string, string>;
       const parametres = corps.demande ? ctx.oauth.lireDemande(corps.demande) : null;
 
@@ -509,7 +519,7 @@ export async function enregistrerRoutesOauth(app: FastifyInstance, ctx: Contexte
     });
 
     // ─── Émission des jetons ──────────────────────────────────────────────────
-    portee.post('/oauth/jeton', async (requete, reponse) => {
+    portee.post('/oauth/jeton', CORPS_OAUTH, async (requete, reponse) => {
       const analyse = zRequeteJetonOauth.safeParse(requete.body ?? {});
       if (!analyse.success) {
         return erreurOauth(reponse, 400, 'invalid_request', 'Paramètres de la requête de jeton invalides.');
@@ -572,7 +582,7 @@ export async function enregistrerRoutesOauth(app: FastifyInstance, ctx: Contexte
     });
 
     // ─── Révocation (RFC 7009) ────────────────────────────────────────────────
-    portee.post('/oauth/revoquer', async (requete, reponse) => {
+    portee.post('/oauth/revoquer', CORPS_OAUTH, async (requete, reponse) => {
       const corps = (requete.body ?? {}) as Record<string, string>;
       // La spécification impose de répondre 200 même pour un jeton inconnu : distinguer
       // les deux cas dirait à qui essaie si un jeton a existé.

@@ -133,11 +133,14 @@ Trois conséquences qui ne se devinent pas :
 `packages/server/test/pdf.test.ts` verrouille ces points sur trois régimes et un à dix
 exercices : parité des cellules, caractères absents des polices, trous de gabarit.
 
-Deux plafonds encadrent enfin l'impression, dans `pdf/file.ts` : **deux Chromium à la fois**
-au plus, douze demandes en attente, et **soixante secondes** par impression. Un export
-coûte 160 Mo de pointe et 480 ms mesurés ; sans plafond, les trente que la limitation de
-débit autorise par quart d'heure pouvaient partir ensemble et réclamer cinq gigaoctets. Le
-jeton est **transmis** au premier de la file, jamais rendu puis repris : décrémenter d'abord
+Deux plafonds encadrent enfin l'impression : **deux Chromium à la fois** au plus, douze
+demandes en attente, et **soixante secondes** par impression. `pdf/file.ts` porte les deux
+mécanismes ; les trois valeurs, elles, sont au point d'appel, dans `pdf/index.ts`. Un export
+coûte 480 ms et **127 Mo au-dessus** du navigateur partagé, qui pèse déjà 242 Mo — mesuré en
+PSS cumulé, la somme des RSS comptant la mémoire partagée une fois par processus et doublant
+le résultat. Le plafond porte donc sur le surcoût : deux exports demandent 500 Mo, non 250.
+Sans plafond, les trente que la limitation de débit autorise par quart d'heure pouvaient
+partir ensemble et réclamer quatre gigaoctets. Le jeton est **transmis** au premier de la file, jamais rendu puis repris : décrémenter d'abord
 laissait le compteur sous le plafond le temps d'une micro-tâche, et trois Chromium
 tournaient là où le plafond en promettait deux.
 
@@ -348,13 +351,23 @@ Douze règles à ne pas défaire :
 
 8. **Ce qu'un anonyme peut faire coûter est borné avant l'analyse du corps.** Le plafond de
    corps global vaut un mégaoctet, et non seize : la limitation de débit vit dans le
-   gestionnaire, donc APRÈS l'analyse, et ne borne pas le coût d'une requête. Les trois
+   gestionnaire, donc APRÈS l'analyse, et ne borne pas le coût d'une requête. Les **sept**
    points d'entrée joignables sans authentification refusent en outre la décompression —
-   `@fastify/compress`, enregistré globalement, pose un crochet de détente sur chaque route,
-   et 14 625 octets de gzip s'y détendaient en 14,3 Mo pour 110 à 134 ms de boucle
-   d'événements bloquée, sur une adresse dont le compteur répondait déjà 429. Rapport de
-   1026 pour 1, dans un processus mono-fil. Les trois routes qui portent un dossier ont leur
-   propre plafond, à deux mégaoctets.
+   trois dans l'API, et les quatre POST d'OAuth, dont le formulaire de consentement, qui est
+   justement l'étape qui crée l'identité. `@fastify/compress`, enregistré globalement, pose
+   un crochet de détente sur chaque route, et 14 625 octets de gzip s'y détendaient en
+   14,3 Mo — rapport de 1026 pour 1 — pour 110 à 165 ms de traitement, sur une adresse dont
+   le compteur répondait déjà 429. Ne pas écrire « boucle d'événements bloquée » : la détente
+   de zlib tourne dans le vivier de fils de libuv, et le retard cumulé de la boucle n'est que
+   de 31 à 46 ms sur une requête isolée. C'est à la **concurrence** que l'indisponibilité se
+   voit : dix bombes ensemble donnent 861 ms et 177 ms de pire retard.
+
+   Et le plafond de corps s'applique au flux **détendu** : un `bodyLimit` serré borne donc
+   l'amplification à lui seul. C'est pourquoi les routes OAuth, déjà couvertes par le
+   mégaoctet global, ne coûtaient que 8 à 25 ms et non 110 ; leur plafond propre est
+   maintenant à 64 Ko, celui de leur parseur de formulaire ne bornant que le formulaire. Les
+   deux gardes sont éprouvés séparément dans `securite.test.ts`. Les trois routes qui portent
+   un dossier ont leur propre plafond, à deux mégaoctets.
 9. **Une écriture est une transaction, et l'historique de l'assistant ne se regroupe pas.**
    `ecrire()`, `creer()` et `supprimer()` passent par `enBloc` : une interruption entre
    l'UPDATE du dossier et l'archivage de sa version laissait un trou définitif dans

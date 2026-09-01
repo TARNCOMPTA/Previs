@@ -702,13 +702,24 @@ describe('ce qu’un anonyme peut faire coûter au serveur', () => {
    * point d'entrée anonyme rencontre avant l'analyse de son corps : la limitation de débit,
    * elle, vit dans le gestionnaire, donc après. Pire, `@fastify/compress` est enregistré
    * globalement et pose un crochet de DÉCOMPRESSION sur chaque route — mesuré, 14 625
-   * octets de gzip se détendaient en 14,3 Mo et coûtaient 110 à 134 ms de boucle
-   * d'événements bloquée, sur une adresse dont le compteur répondait déjà 429.
+   * octets de gzip se détendaient en 14,3 Mo, pour 110 à 165 ms de traitement par requête,
+   * sur une adresse dont le compteur répondait déjà 429. La détente de zlib tourne dans le
+   * vivier de fils de libuv et non sur le fil principal : le retard cumulé de la boucle
+   * d'événements n'est que de 31 à 46 ms pour une requête isolée. C'est à la concurrence que
+   * l'indisponibilité se voit — dix bombes ensemble : 861 ms, et 177 ms de pire retard.
+   *
+   * Sept points d'entrée sont joignables sans identité, et non trois : les trois de l'API,
+   * et les quatre POST d'OAuth — dont le formulaire de consentement, qui est justement
+   * l'étape qui crée l'identité.
    */
   const ANONYMES = [
     '/api/auth/connexion',
     '/api/auth/cles/connexion/options',
     '/api/auth/cles/connexion',
+    '/oauth/enregistrer',
+    '/oauth/autoriser',
+    '/oauth/jeton',
+    '/oauth/revoquer',
   ] as const;
 
   it('un corps démesuré est refusé avant d’être analysé', async () => {
@@ -719,6 +730,22 @@ describe('ce qu’un anonyme peut faire coûter au serveur', () => {
         url,
         headers: { 'content-type': 'application/json' },
         payload: enorme,
+      });
+      expect(r.statusCode, url).toBe(413);
+    }
+  });
+
+  it('les quatre POST d’OAuth plafonnent leur corps à soixante-quatre kilo-octets', async () => {
+    // Le parseur de formulaire de la portée OAuth borne à 64 Ko, mais lui seul : un corps
+    // JSON sur ces mêmes routes retombait sur le plafond global d'un mégaoctet. Deux cents
+    // kilo-octets tiennent donc sous le global et doivent malgré tout être refusés.
+    const gros = JSON.stringify({ client_name: 'A'.repeat(200_000) });
+    for (const url of ['/oauth/enregistrer', '/oauth/autoriser', '/oauth/jeton', '/oauth/revoquer']) {
+      const r = await app.inject({
+        method: 'POST',
+        url,
+        headers: { 'content-type': 'application/json' },
+        payload: gros,
       });
       expect(r.statusCode, url).toBe(413);
     }
@@ -739,7 +766,10 @@ describe('ce qu’un anonyme peut faire coûter au serveur', () => {
         payload: bombe,
       });
       const cout = performance.now() - debut;
-      // Ni 200 ni un traitement : la requête est écartée sur son encodage.
+      // Le refus ne porte PAS sur l'encodage, contrairement à ce qu'on croit en lisant le
+      // statut : avec « decompress: false » le greffon n'installe aucun crochet, les octets
+      // gzip arrivent tels quels à l'analyseur JSON, et c'est lui qui échoue. Le même 400
+      // apparaît sans en-tête « content-encoding ». Ce qui est éprouvé ici est le coût.
       expect(r.statusCode, url).toBe(400);
       // Et surtout, elle ne coûte pas le prix de la détente. Le seuil est large : ce qui
       // est éprouvé est l'ordre de grandeur, 1 ms contre 110.
