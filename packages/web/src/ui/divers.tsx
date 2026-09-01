@@ -6,7 +6,7 @@ import {
   type Repartition,
 } from '@previs/core';
 import { useEffect, useState, type ReactNode } from 'react';
-import { ChampMontant, ChampNombre, Selecteur } from './champs.js';
+import { ChampMontant, ChampNombre, EntreeNombre, Selecteur } from './champs.js';
 import { matriceApresSaisie } from './repartition.js';
 
 /** Indicateur mis en avant : une valeur, son libellé, et une tonalité. */
@@ -290,6 +290,7 @@ export function RepartitionMensuelle({
           max={24}
           onChange={(mois) => onChange({ type: 'ponctuel', mois })}
           aide="1 correspond au premier mois de l’exercice, pas au mois de janvier."
+          differe
         />
       ) : null}
 
@@ -301,6 +302,7 @@ export function RepartitionMensuelle({
           max={24}
           onChange={(moisDebut) => onChange({ type: 'demarrage', moisDebut })}
           aide="Le montant est réparti également des mois restants jusqu’à la clôture."
+          differe
         />
       ) : null}
 
@@ -329,16 +331,20 @@ export function RepartitionMensuelle({
                     }}
                   />
                 </div>
-                <input
-                  className="champ nombre"
-                  style={{ padding: '2px 3px', fontSize: 11 }}
-                  type="number"
+                {/*
+                  Le corps du champ est en CSS et non en ligne : un style en ligne bat toute
+                  feuille, y compris la règle qui ramène les champs à seize pixels sous
+                  760 px — et onze pixels font agrandir la page à Safari sur iOS, sans retour.
+                */}
+                <EntreeNombre
+                  className="champ nombre poids-mois"
                   min={0}
-                  value={poids}
-                  aria-label={`Poids du mois ${i + 1}`}
-                  onChange={(e) => {
+                  valeur={poids}
+                  intitule={`Poids du mois ${i + 1}`}
+                  differe
+                  onChange={(saisi) => {
                     const poidsSuivants = [...valeur.poids];
-                    poidsSuivants[i] = Number(e.target.value);
+                    poidsSuivants[i] = saisi;
                     onChange({ type: 'saisonnalite', poids: poidsSuivants });
                   }}
                 />

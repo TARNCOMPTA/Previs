@@ -475,10 +475,14 @@ export const useDossier = create<EtatDossier>((set, get) => {
           /*
            * C'est l'IDENTITÉ du dossier envoyé qui décide, non l'état. Si le dossier courant
            * n'est plus celui qui vient de partir, une frappe est arrivée entre-temps et c'est
-           * elle qui fait foi : adopter la réponse du serveur l'effacerait. Le drapeau de vol
-           * interdit déjà deux envois concurrents, si bien que le critère n'est aujourd'hui
-           * jamais mis en défaut par un essai — il est gardé parce qu'il reste juste sans lui,
-           * là où l'ancien critère fondé sur l'état ne l'était que par accident.
+           * elle qui fait foi : adopter la réponse du serveur l'effacerait.
+           *
+           * Le scénario qui le sépare de l'ancien critère, fondé sur l'état : annuler PUIS
+           * rétablir pendant que le PUT est en vol. La pile de rétablissement gardant les
+           * dossiers par référence, le magasin retrouve l'objet exactement envoyé alors que
+           * l'état est repassé à « modifie » ; le critère d'état reprogrammerait un second
+           * envoi d'un dossier identique. C'est éprouvé — « annuler puis rétablir pendant
+           * l'envoi ne provoque pas un second PUT identique ».
            *
            * Et quand rien n'a changé, on garde tout de même le dossier LOCAL : la réponse du
            * serveur est un graphe entièrement neuf — `normaliserDossier(JSON.parse(…))` — dont

@@ -28,26 +28,72 @@ function sourcesTsx(repertoire: string): string[] {
 }
 
 describe('l’adaptation au téléphone', () => {
-  it('aucun champ de saisie ne descend sous seize pixels', () => {
-    // En deçà, Safari sur iOS AGRANDIT la page à la prise de focus et ne la réduit jamais :
-    // saisir un montant laisse l'écran zoomé, et l'en-tête hors de vue. Le contrôle porte
-    // sur toutes les déclarations de la feuille, pas seulement sur celles du bloc de média :
-    // une règle de corps posée ailleurs sur un sélecteur de champ produirait le même défaut.
-    const regles = [...CSS.matchAll(/([^{}]+)\{([^}]*)\}/g)];
-    const fautives: string[] = [];
+  /** Le contenu de `@media (max-width: 760px)`, où le corps des champs doit valoir seize. */
+  const blocTelephone = (): string => {
+    const debut = CSS.indexOf('@media (max-width: 760px) {');
+    expect(debut, 'le bloc @media (max-width: 760px) a disparu').toBeGreaterThan(-1);
+    let profondeur = 0;
+    for (let i = CSS.indexOf('{', debut); i < CSS.length; i += 1) {
+      if (CSS[i] === '{') profondeur += 1;
+      else if (CSS[i] === '}') {
+        profondeur -= 1;
+        if (profondeur === 0) return CSS.slice(CSS.indexOf('{', debut) + 1, i);
+      }
+    }
+    throw new Error('bloc @media non refermé');
+  };
 
-    for (const [, selecteurs, corps] of regles) {
+  /** Les déclarations de corps posées sur un sélecteur de champ, dans un fragment de CSS. */
+  function corpsDesChamps(fragment: string): { selecteur: string; px: number }[] {
+    const trouvees: { selecteur: string; px: number }[] = [];
+    // Les commentaires sont retirés d'abord : ils précèdent la règle et se retrouveraient
+    // dans le sélecteur capturé, si bien que deux règles portant le MÊME sélecteur ne se
+    // reconnaîtraient plus l'une l'autre.
+    const sansCommentaires = fragment.replace(/\/\*[\s\S]*?\*\//g, '');
+    for (const [, selecteurs, corps] of sansCommentaires.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
       if (!/\b(input|select|textarea)\b/.test(selecteurs)) continue;
       // Les cases à cocher et les boutons radio n'ont pas de texte : le corps n'y déclenche
       // aucun agrandissement, et ils sont dimensionnés en largeur et hauteur.
       if (/type=['"](checkbox|radio)['"]/.test(selecteurs)) continue;
       const taille = /font-size:\s*([\d.]+)px/.exec(corps);
-      if (taille && Number(taille[1]) < 16) {
-        fautives.push(`${selecteurs.trim().replace(/\s+/g, ' ')} → ${taille[1]}px`);
+      if (taille) trouvees.push({ selecteur: selecteurs.trim().replace(/\s+/g, ' '), px: Number(taille[1]) });
+    }
+    return trouvees;
+  }
+
+  it('sous le seuil du téléphone, aucun champ ne descend sous seize pixels', () => {
+    // En deçà, Safari sur iOS AGRANDIT la page à la prise de focus et ne la réduit jamais :
+    // saisir un montant laisse l'écran zoomé, et l'en-tête hors de vue.
+    const fautives = corpsDesChamps(blocTelephone()).filter((r) => r.px < 16);
+    expect(fautives.map((r) => `${r.selecteur} → ${r.px}px`)).toEqual([]);
+  });
+
+  it('un corps réduit posé ailleurs est bien relevé dans la règle de média', () => {
+    // Une rangée compacte peut légitimement réduire le corps sur un grand écran — les douze
+    // poids d'une saisonnalité tiennent en 11 px. Mais la règle de média doit alors reprendre
+    // LE MÊME sélecteur : sinon le champ reste sous seize pixels sur un téléphone.
+    const horsMedia = CSS.replace(blocTelephone(), '');
+    const dansMedia = corpsDesChamps(blocTelephone());
+
+    for (const reduite of corpsDesChamps(horsMedia).filter((r) => r.px < 16)) {
+      const releve = dansMedia.find((r) => r.selecteur === reduite.selecteur && r.px >= 16);
+      expect(releve, `${reduite.selecteur} vaut ${reduite.px}px et n’est pas relevé`).toBeDefined();
+    }
+  });
+
+  it('aucun corps de champ n’est posé en style EN LIGNE', () => {
+    // Un style en ligne bat toute feuille, règle de média comprise : les douze poids d'une
+    // saisonnalité portaient « fontSize: 11 » en ligne, et la règle des seize pixels ne
+    // pouvait rien pour eux. Le contrôle vaut pour toute taille, même supérieure à seize :
+    // ce qui est interdit est de mettre le corps d'un champ hors de portée de la feuille.
+    const fautifs: string[] = [];
+    for (const fichier of sourcesTsx(RACINE)) {
+      const source = readFileSync(fichier, 'utf8');
+      for (const [, avant] of source.matchAll(/(<input[\s\S]{0,400}?)fontSize:/g)) {
+        if (!/\/>|<\/input>/.test(avant)) fautifs.push(fichier.slice(RACINE.length));
       }
     }
-
-    expect(fautives).toEqual([]);
+    expect([...new Set(fautifs)]).toEqual([]);
   });
 
   it('la règle des seize pixels est bien posée, et sous le seuil du téléphone', () => {

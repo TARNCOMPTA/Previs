@@ -238,6 +238,10 @@ inventer un chiffre suppose de ne jamais en perdre un.
    n'est plus celui qui est parti, c'est la frappe qui fait foi. Et quand rien n'a changé, on
    garde tout de même le graphe LOCAL : la réponse du serveur est un graphe entièrement neuf,
    dont l'adoption détruisait tout le partage structurel et faisait rerendre chaque grille.
+   Le scénario qui distingue ce critère de l'ancien, fondé sur l'état : annuler **puis**
+   rétablir pendant que le PUT est en vol — la pile de rétablissement gardant les dossiers
+   par référence, le magasin retrouve l'objet exactement envoyé alors que l'état est repassé
+   à « modifie », et le critère d'état reprogrammerait un second envoi identique.
 4. **Le sondage relit l'état APRÈS son aller-retour.** Son garde portait sur un état vieux
    d'un GET : une frappe faite pendant le vol était remplacée par la version du serveur.
 5. **Toute écriture qui suit un aller-retour porte un jeton d'ouverture.** Sans lui, une
@@ -255,6 +259,13 @@ Deux écueils propres à la **vue scindée** (`web/src/layout/`), qui ne se devi
    complets du prévisionnel, alors qu'aucun nombre ne bouge, et empilait vingt entrées
    d'annulation : trois libellés vidaient la pile de cinquante niveaux. Mesuré : un
    caractère passe de 7 ms à 0,20 ms, et une seule annulation restitue le libellé entier.
+
+   Deux corollaires qu'il a fallu reprendre après coup : un champ **nu**, écrit à la main
+   plutôt que pris dans `champs.tsx`, échappe à tout cela — les douze poids d'une
+   saisonnalité recalculaient à chaque caractère, d'où `EntreeNombre`, qui est le corps de
+   `ChampNombre` sans son enveloppe. Et un **style en ligne** bat toute feuille, règle de
+   média comprise : `fontSize: 11` sur ces mêmes champs mettait le corps hors de portée de la
+   règle des seize pixels. Les deux sont désormais interdits par `web/test/telephone.test.ts`.
 
    `differe` est en **option et non par défaut**, et la raison ne se devine pas : un
    formulaire local dont le bouton porte `disabled={!nom.trim()}` se verrouillerait. Le

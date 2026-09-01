@@ -132,6 +132,51 @@ export function ChampNombre({
   /** Remonte au `blur` plutôt qu'à chaque caractère. Voir `ChampTexte`. */
   differe?: boolean;
 }) {
+  return (
+    <Enveloppe libelle={libelle} aide={aide}>
+      <EntreeNombre
+        valeur={valeur}
+        onChange={onChange}
+        min={min}
+        max={max}
+        pas={pas}
+        desactive={desactive}
+        differe={differe}
+      />
+    </Enveloppe>
+  );
+}
+
+/**
+ * Le champ numérique NU, sans libellé ni enveloppe.
+ *
+ * Pour les grilles compactes — les douze poids d'une saisonnalité, par exemple — où un
+ * libellé par champ n'aurait pas de place. C'est le même corps que `ChampNombre`, et non
+ * une copie : les douze poids étaient un `input` écrit à la main, sans `differe`, et chaque
+ * caractère y déclenchait un recalcul complet du prévisionnel et une entrée d'annulation.
+ */
+export function EntreeNombre({
+  valeur,
+  onChange,
+  min,
+  max,
+  pas = 1,
+  desactive,
+  differe,
+  intitule,
+  className = 'champ nombre',
+}: {
+  valeur: number;
+  onChange: (v: number) => void;
+  min?: number;
+  max?: number;
+  pas?: number;
+  desactive?: boolean;
+  differe?: boolean;
+  /** Nom accessible, faute de libellé visible. */
+  intitule?: string;
+  className?: string;
+}) {
   const [saisie, setSaisie] = useState<string | null>(null);
   const affichee = saisie ?? String(Number.isFinite(valeur) ? valeur : 0);
 
@@ -146,33 +191,32 @@ export function ChampNombre({
   };
 
   return (
-    <Enveloppe libelle={libelle} aide={aide}>
-      <input
-        className="champ nombre"
-        type="number"
-        value={affichee}
-        min={min}
-        max={max}
-        step={pas}
-        disabled={desactive}
-        onChange={(e) => {
-          setSaisie(e.target.value);
-          if (!differe) remonter(e.target.value);
-        }}
-        onBlur={() => {
-          if (differe && saisie !== null) remonter(saisie);
+    <input
+      className={className}
+      type="number"
+      value={affichee}
+      min={min}
+      max={max}
+      step={pas}
+      disabled={desactive}
+      aria-label={intitule}
+      onChange={(e) => {
+        setSaisie(e.target.value);
+        if (!differe) remonter(e.target.value);
+      }}
+      onBlur={() => {
+        if (differe && saisie !== null) remonter(saisie);
+        setSaisie(null);
+      }}
+      onKeyDown={(e) => {
+        if (!differe) return;
+        if (e.key === 'Enter') e.currentTarget.blur();
+        else if (e.key === 'Escape') {
           setSaisie(null);
-        }}
-        onKeyDown={(e) => {
-          if (!differe) return;
-          if (e.key === 'Enter') e.currentTarget.blur();
-          else if (e.key === 'Escape') {
-            setSaisie(null);
-            e.currentTarget.blur();
-          }
-        }}
-      />
-    </Enveloppe>
+          e.currentTarget.blur();
+        }
+      }}
+    />
   );
 }
 

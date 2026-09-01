@@ -125,6 +125,40 @@ describe('un envoi en vol n’écrase pas la frappe qui le suit', () => {
     expect(puts).toEqual(['PUT v1', 'PUT v2']);
   });
 
+  it('annuler puis rétablir pendant l’envoi ne provoque pas un second PUT identique', async () => {
+    /*
+     * Le seul scénario qui SÉPARE les deux critères de la réponse d'un envoi : celui de
+     * l'identité du dossier envoyé, et l'ancien, fondé sur l'état du magasin.
+     *
+     * Annuler seul ne suffit pas : la pile rend le dossier d'AVANT la frappe, qui diffère
+     * réellement de ce qui est parti — un second envoi est alors légitime. Il faut annuler
+     * PUIS rétablir : la pile de rétablissement conserve les dossiers par référence, si bien
+     * que le magasin retrouve l'objet EXACTEMENT envoyé, tandis que les deux opérations ont
+     * reposé l'état à « modifie ».
+     *
+     * Le critère d'identité conclut alors « inchangé » et s'arrête là ; le critère d'état
+     * conclurait « changé », et le bloc « finally » reprogrammerait un SECOND envoi d'un
+     * dossier identique, créant chez le client une version 3 qui ne dit rien de neuf. Le
+     * commentaire du magasin annonçait ce critère comme jamais mis en défaut par un essai :
+     * il l'est ici.
+     */
+    depot.latence = 1000;
+    taper('VALEUR MODIFIÉE');
+    await patienter(900); // le PUT est parti à t+800 et court encore
+    const envoye = magasin.useDossier.getState().dossier;
+    expect(magasin.useDossier.getState().etat).toBe('enregistrement');
+
+    magasin.useDossier.getState().annuler();
+    magasin.useDossier.getState().retablir();
+    // La même référence qu'au départ : c'est là tout le sujet.
+    expect(magasin.useDossier.getState().dossier).toBe(envoye);
+    await patienter(3000);
+
+    const puts = depot.appels.filter((a) => a.startsWith('PUT'));
+    expect(puts).toEqual(['PUT v1']);
+    expect(magasin.useDossier.getState().etat).toBe('a_jour');
+  });
+
   it('la frappe faite pendant l’envoi ne reste pas en attente indéfiniment', async () => {
     depot.latence = 1000;
     taper('UNE');

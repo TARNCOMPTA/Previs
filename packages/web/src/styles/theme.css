@@ -511,6 +511,13 @@ table.grille td.zone-vide, table.etat td.zone-vide { padding: 28px 16px; }
  * Le seuil de 760 px est celui d'un téléphone en paysage. Au-delà, rien ne change : ces
  * règles ne touchent pas l'écran de travail du cabinet.
  */
+/* Douze champs sur une rangée : le corps est réduit faute de place. La règle de média le
+   ramène à seize pixels sur un téléphone, où la carte défile plutôt que de serrer. */
+input.poids-mois {
+  padding: 2px 3px;
+  font-size: 11px;
+}
+
 @media (max-width: 760px) {
   /*
    * La cause première : « .rangee » ne se replie pas. Chaque en-tête de l'application en
@@ -541,6 +548,8 @@ table.grille td.zone-vide, table.etat td.zone-vide { padding: 28px 16px; }
   input,
   select,
   textarea { font-size: 16px; }
+  /* Bat la règle réduite ci-dessus, à spécificité égale et plus loin dans la feuille. */
+  input.poids-mois { font-size: 16px; }
   .champ { padding: 9px 10px; }
 
   /* Les grilles de champs passent en une colonne plutôt que d'écraser deux. */
