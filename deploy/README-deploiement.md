@@ -54,7 +54,7 @@ Comptez cinq à dix minutes, l'essentiel étant la construction.
 |---|---|
 | `--domaine` | Nom de domaine servi. Par défaut `previs.tarncompta.fr`. |
 | `--courriel` | Adresse de notification Let's Encrypt. Obligatoire sauf `--sans-tls`. |
-| `--branche` | Branche à déployer. Par défaut `main`. |
+| `--branche` | Branche à déployer. Par défaut, **celle qui est extraite** — un clone neuf prend donc la branche par défaut du dépôt. Viser `main` en dur faisait perdre sa mise à jour à une copie posée sur une branche de travail. |
 | `--racine` | Répertoire d'installation. Par défaut `/opt/previs`. |
 | `--port` | Port interne imposé. Par défaut, le premier libre à partir de 8080. |
 | `--sans-tls` | Reste en HTTP, sans certificat. Pour un essai en réseau local. |
