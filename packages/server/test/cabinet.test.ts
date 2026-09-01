@@ -36,7 +36,7 @@ const config: Configuration = {
  *
  * La signature ne suffit plus : le contrôle lit aussi les dimensions dans l'en-tête IHDR,
  * puisque le plafond de POIDS ne dit rien de la SURFACE — un PNG de 20 000 × 20 000 pixels
- * tient en 389 Ko et fait passer l'export de 677 ms à 27,8 secondes.
+ * tient en 380 Ko et fait passer l'export de 576 ms à 29 166 millisecondes.
  */
 const PNG =
   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42m' +

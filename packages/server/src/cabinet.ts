@@ -52,9 +52,10 @@ const SIGNATURES: Record<string, readonly number[][]> = {
  *
  * Le plafond du contrat porte sur le POIDS de l'URI de données — 700 000 caractères — et le
  * poids ne dit rien de la surface : un PNG en niveaux de gris de 20 000 × 20 000 pixels,
- * entièrement conforme, tient en 389 Ko. Il passe la signature, il passe zod, et il fait
- * passer l'export du dossier de 677 ms à 27,8 secondes en creusant quatre gigaoctets de
- * mémoire dans Chromium. Le délai d'impression, à soixante secondes, ne se déclenche pas.
+ * entièrement conforme, tient en 380 Ko — 388 871 octets, 519 000 caractères d'URI. Il passe
+ * la signature, il passe zod, et il fait passer l'export du dossier de 576 ms à 29 166,
+ * mesuré, en creusant quatre gigaoctets de mémoire dans Chromium. Le délai d'impression, à
+ * soixante secondes, ne se déclenche pas.
  *
  * Et le logo est PERSISTANT : posé une fois, il empoisonne tous les exports ultérieurs du
  * dossier, y compris ceux d'un autre collaborateur. Sur le logo du cabinet, tous les
