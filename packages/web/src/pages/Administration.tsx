@@ -55,7 +55,7 @@ export function Administration() {
   }
 
   return (
-    <div style={{ minHeight: '100vh' }}>
+    <div className="hauteur-minimale-fenetre">
       <header
         className="rangee"
         style={{ padding: '10px 18px', borderBottom: '1px solid var(--trait)', background: 'var(--surface)', gap: 12 }}

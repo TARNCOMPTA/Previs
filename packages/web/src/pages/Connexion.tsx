@@ -29,7 +29,10 @@ export function Connexion() {
   };
 
   return (
-    <div style={{ display: 'grid', placeItems: 'center', minHeight: '100vh', padding: 20 }}>
+    <div
+      className="hauteur-minimale-fenetre"
+      style={{ display: 'grid', placeItems: 'center', padding: 20 }}
+    >
       <form className="carte" style={{ width: 380, maxWidth: '100%' }} onSubmit={soumettre}>
         <div className="corps pile">
           <div style={{ marginBottom: 4 }}>

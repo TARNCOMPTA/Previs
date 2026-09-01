@@ -19,7 +19,7 @@ export function Compte() {
   const utilisateur = useSession((e) => e.utilisateur);
 
   return (
-    <div style={{ minHeight: '100vh' }}>
+    <div className="hauteur-minimale-fenetre">
       <header
         className="rangee"
         style={{

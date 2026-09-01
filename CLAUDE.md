@@ -265,8 +265,11 @@ Cinq points qui ne se devinent pas :
    `scrollIntoView` : celui-ci ferait aussi défiler la page.
 2. **Seize pixels pour un champ, et pas moins.** En deçà, Safari sur iOS AGRANDIT la page à
    la prise de focus et ne la réduit jamais : saisir un montant laissait l'écran zoomé.
-3. **`100dvh`, jamais `100vh`** (`.hauteur-fenetre`) : `vh` ignore la barre d'adresse, et la
-   barre d'indicateurs se retrouvait dessous.
+3. **`100dvh`, jamais `100vh`** (`.hauteur-fenetre`, `.hauteur-minimale-fenetre`) : `vh`
+   ignore la barre d'adresse, et la barre d'indicateurs se retrouvait dessous. Passer par la
+   classe et non par un style en ligne : trois écrans avaient gardé `minHeight: '100vh'` en
+   ligne, et le correctif ne s'y appliquait donc pas. `web/test/telephone.test.ts` l'interdit
+   désormais.
 4. **Une carte fait défiler son contenu** (`.carte { overflow-x: auto }`) plutôt que de
    pousser la page. La moitié des tableaux n'ont pas de `.defilement-horizontal` autour
    d'eux ; sur un téléphone, la liste des dossiers portait la fenêtre de mise en page de 390
@@ -288,6 +291,25 @@ Et un défaut préexistant, qu'il vaut mieux connaître : `overflow-x: auto` fai
 `.defilement-horizontal` un conteneur de défilement sur **les deux** axes, de hauteur libre.
 Un en-tête de tableau en `position: sticky; top: 0` s'y accroche donc et ne colle jamais.
 Le calage latéral de la colonne d'intitulés, lui, fonctionne : cet axe défile vraiment.
+La règle `.carte { overflow-x: auto }` du point 4 étend cette contrepartie à **toutes** les
+cartes sous 760 px : c'est un échange assumé, un tableau qui déborde étant pire qu'un en-tête
+qui ne colle pas.
+
+Trois contreparties encore, qui ne se lisent pas dans le CSS :
+
+- **Sous 760 px, l'interface retire de l'information**, elle ne fait pas que la replier :
+  `.sur-grand-ecran` masque cinq colonnes de la liste des dossiers — Régime, Type, Période,
+  CA du 1ᵉʳ exercice, Modifié. C'est un choix de contenu, pas de mise en page ; y ajouter une
+  colonne demande de décider si elle survit au téléphone.
+- **Entre 761 et 1 179 px, la bascule de vue scindée n'est plus affichée du tout**, là où
+  elle l'était désactivée. La vue de bureau n'est donc « inchangée » qu'au-delà de 1 180 px.
+- **Le masque de dégradé des rangs qui défilent est posé sans condition** : le dernier
+  élément d'un rang court est estompé pour rien, `scroll-timeline` n'étant pas partout.
+
+Ce qui s'éprouve sans navigateur est dans `web/test/telephone.test.ts` : le corps des champs,
+la présence de la règle des seize pixels, et l'absence de tout `100vh` isolé. Le reste — pas
+de débordement à sept largeurs, calage de l'onglet actif, hauteur réelle d'une cible tactile
+— se regarde, comme la mise en page du PDF.
 
 Pour une modification du chemin de saisie, mesurer : ouvrir un dossier d'une
 soixantaine de lignes et chronométrer la tâche synchrone déclenchée par une frappe.
