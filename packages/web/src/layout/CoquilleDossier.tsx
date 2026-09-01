@@ -525,12 +525,20 @@ function OngletsSaisie({
    * montrait une barre commençant à « Bord », sans rien pour dire où l'on se trouve.
    * Le défilement est calculé plutôt que confié à `scrollIntoView`, qui fait aussi défiler
    * la PAGE — on aurait perdu le titre de l'écran à chaque navigation.
+   *
+   * La position vient des rectangles et non de `offsetLeft` : celui-ci part du plus proche
+   * ancêtre POSITIONNÉ, et ni la barre ni aucun de ses ancêtres ne l'est — il incluait donc
+   * le garnissage gauche du conteneur, et le « centre » était décalé d'autant.
    */
   useEffect(() => {
     const conteneur = barre.current;
     const actif = conteneur?.querySelector<HTMLElement>('[data-actif="1"]');
     if (!conteneur || !actif) return;
-    const centre = actif.offsetLeft - (conteneur.clientWidth - actif.offsetWidth) / 2;
+    const dansLaBarre =
+      actif.getBoundingClientRect().left -
+      conteneur.getBoundingClientRect().left +
+      conteneur.scrollLeft;
+    const centre = dansLaBarre - (conteneur.clientWidth - actif.offsetWidth) / 2;
     conteneur.scrollLeft = Math.max(0, centre);
   }, [courant]);
 

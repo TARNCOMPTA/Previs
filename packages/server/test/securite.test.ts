@@ -15,6 +15,7 @@ import type { FastifyInstance } from 'fastify';
 import { construireApplication, type Application } from '../src/index.js';
 import type { Configuration } from '../src/config.js';
 import { empreinteJeton, LimiteurConnexions, LimiteurDebit } from '../src/securite.js';
+import { NOM_COOKIE } from '../src/auth.js';
 import { bornerExportPdf } from '../src/mcpHttp.js';
 import { avecDelai, FileImpressions } from '../src/pdf/file.js';
 
@@ -875,7 +876,134 @@ describe('l’ampleur d’un dossier est bornée dans son ensemble', () => {
       payload: { dossier: lourd, versionAttendue: 1 },
     });
     expect(r.statusCode).toBe(422);
-    expect(r.json().erreur).toMatch(/Ko, pour un maximum de/);
+    expect(r.json().erreur).toMatch(/dépasse le poids maximal de/);
+  });
+
+  it('et le plafond compte des OCTETS, non des caractères', async () => {
+    /*
+     * `JSON.stringify(d).length` compte des unités de code UTF-16 : un « € » en vaut une
+     * pour trois octets. Un dossier de « € » passait donc à trois fois le plafond — mesuré,
+     * 1 232 027 unités de code acceptées pour 3 432 049 octets réels, et le message annonçait
+     * des kilo-octets qui n'en étaient pas. Le dossier construit ici tient SOUS l'ancien
+     * décompte et doit malgré tout être refusé.
+     */
+    const modele = modeleDossier('IS');
+    const multiOctets = normaliserDossier({
+      ...modele,
+      charges: {
+        ...modele.charges,
+        // Deux cent cinquante lignes : le corps tient sous le plafond de route de 2 Mio —
+        // sinon la requête est refusée en 413 avant d'atteindre le contrôle d'ampleur —
+        // tout en dépassant les 1,5 Mo d'octets du plafond de dossier.
+        lignes: Array.from({ length: 250 }, (_, i) =>
+          completerLigne('charges.lignes', {
+            id: `c${i}`,
+            libelle: '€'.repeat(200),
+            note: '€'.repeat(2000),
+            montants: [1000, 1000, 1000],
+          }),
+        ),
+      },
+    });
+    // Sous l'ancien décompte, donc accepté avant la correction.
+    expect(JSON.stringify(multiOctets).length).toBeLessThan(1_500_000);
+    // Au-dessus du plafond en octets réels, et sous le plafond de route de 2 Mio.
+    const octets = Buffer.byteLength(JSON.stringify(multiOctets), 'utf8');
+    expect(octets).toBeGreaterThan(1_500_000);
+    expect(octets).toBeLessThan(2 * 1024 * 1024);
+
+    const cree = await app.inject({
+      method: 'POST',
+      url: '/api/dossiers',
+      headers: { [ENTETE_JETON]: jetonAdmin },
+      payload: { nom: 'Dossier en euros', modele: 'IS' },
+    });
+    const r = await app.inject({
+      method: 'PUT',
+      url: `/api/dossiers/${cree.json().id}`,
+      headers: { [ENTETE_JETON]: jetonAdmin },
+      payload: { dossier: multiOctets, versionAttendue: 1 },
+    });
+    expect(r.statusCode).toBe(422);
+    expect(r.json().erreur).toMatch(/dépasse le poids maximal de/);
+  });
+
+  it('les cinq routes d’écriture partagent un plafond de débit, restaurer comprise', async () => {
+    /*
+     * L'écriture est plafonnée par COMPTE, à 900 appels par fenêtre, et le compteur est
+     * partagé : épuiser le plafond par une route doit refuser les quatre autres. « restaurer »
+     * y échappait — elle écrit pourtant une version complète, avec un corps de requête vide,
+     * si bien qu'une boucle gonflait l'historique sans borne.
+     *
+     * La fenêtre est FIXE et ancrée au premier appel, non glissante : un titulaire peut donc
+     * placer 900 appels à la fin d'une fenêtre et autant au début de la suivante. C'est
+     * accepté — le plafond empêche une boucle de saturer le serveur, il ne facture pas un
+     * quota — mais il faut le savoir, et l'essai le dit plutôt que de le laisser croire.
+     */
+    /*
+     * Sur un compte À PART, et c'est indispensable : le compteur est keyé par titulaire et
+     * vit pour toute la durée de l'application, sans remise à zéro. Épuiser celui de
+     * l'administrateur ferait répondre 429 à tous les essais d'écriture qui suivent dans ce
+     * fichier — constaté.
+     */
+    const titulaire = await application.auth.creerUtilisateur({
+      email: 'plafond@tarncompta.fr',
+      nom: 'Compte à plafonner',
+      motDePasse: MOT_DE_PASSE,
+      role: 'admin',
+    });
+    // La session est ouverte directement : la route de connexion a son propre compteur par
+    // adresse, que des essais précédents de ce fichier épuisent volontairement.
+    const cookie = `${NOM_COOKIE}=${application.auth.ouvrirSession(titulaire.id)}`;
+    const entetes = { cookie, origin: ORIGINE };
+
+    const cree = await app.inject({
+      method: 'POST',
+      url: '/api/dossiers',
+      headers: entetes,
+      payload: { nom: 'Dossier à plafonner', modele: 'IS' },
+    });
+    const id = cree.json().id as string;
+
+    // La création ci-dessus a déjà consommé un appel du plafond.
+    let dernier = 0;
+    for (let i = 0; i < 900; i += 1) {
+      const r = await app.inject({
+        method: 'PATCH',
+        url: `/api/dossiers/${id}`,
+        headers: entetes,
+        payload: { operations: [], versionAttendue: 1 + i },
+      });
+      dernier = r.statusCode;
+      if (dernier === 429) break;
+    }
+    expect(dernier, 'le plafond doit finir par répondre 429').toBe(429);
+
+    // Et il est partagé : les quatre autres routes d'écriture sont refusées aussi.
+    const restaurer = await app.inject({
+      method: 'POST',
+      url: `/api/dossiers/${id}/versions/1/restaurer`,
+      headers: entetes,
+    });
+    expect(restaurer.statusCode, 'restaurer').toBe(429);
+    expect(restaurer.json().erreur).toMatch(/Trop d’écritures/);
+
+    const calculer = await app.inject({
+      method: 'POST',
+      url: `/api/dossiers/${id}/calculer`,
+      headers: entetes,
+      payload: { dossier: modeleDossier('IS') },
+    });
+    expect(calculer.statusCode, 'calculer').toBe(429);
+
+    // Et le compte de l'administrateur, lui, écrit toujours : le plafond est par titulaire.
+    const autre = await app.inject({
+      method: 'POST',
+      url: '/api/dossiers',
+      headers: { [ENTETE_JETON]: jetonAdmin },
+      payload: { nom: 'Dossier d’un autre compte', modele: 'IS' },
+    });
+    expect(autre.statusCode, 'un autre titulaire n’est pas plafonné').toBe(200);
   });
 
   it('la création est bornée elle aussi : elle accepte un dossier complet', async () => {

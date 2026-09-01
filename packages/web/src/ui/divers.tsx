@@ -128,10 +128,13 @@ export function Modale({
         onClick={(e) => e.stopPropagation()}
         className="carte"
         /*
-         * `minWidth: 0` n'est pas décoratif : la modale est un élément de grille, dont le
-         * `min-width` vaut `auto` par défaut — il refuse de descendre sous la largeur
-         * minimale de son contenu, et `maxWidth` perd. Sur un téléphone, la modale
-         * « Nouveau dossier » débordait ainsi de l'écran, bouton « Créer » compris.
+         * Ce qui corrige le débordement de la modale « Nouveau dossier » sur un téléphone est
+         * `minmax(0, 1fr)` sur le VOILE : une piste non bornée se dimensionne sur son contenu,
+         * et le `maxWidth: 100%` se résolvait alors contre elle — cent pour cent de 520 font
+         * 520. `minWidth: 0` ici ne fait rien de plus aujourd'hui : la piste étant bornée à
+         * zéro, la taille minimale automatique de l'élément ne s'applique pas, et la carte
+         * est de toute façon un conteneur de défilement. Il est gardé comme garde-fou si l'un
+         * de ces deux points changeait, non comme la correction.
          *
          * `dvh` plutôt que `vh` : la barre d'adresse de Safari ne compte pas dans `vh`, et
          * le bas de la modale se retrouvait dessous.

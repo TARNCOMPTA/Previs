@@ -47,9 +47,11 @@ export async function construireApplication(config: Configuration): Promise<Appl
      * l'analyse de son corps : la limitation de débit, elle, vit dans le corps du
      * gestionnaire, donc après. Et `@fastify/compress`, enregistré globalement, pose un
      * crochet de DÉCOMPRESSION sur chaque route : mesuré, 14 625 octets de gzip se
-     * détendent en 14,3 Mo et coûtent 110 à 134 ms de boucle d'événements bloquée — sur une
-     * adresse dont le compteur répond déjà 429. Rapport de 1026 pour 1, dans un processus
-     * mono-fil : une centaine de kilo-octets par seconde suffisaient à saturer le serveur.
+     * détendent en 14,3 Mo et coûtent 110 à 165 ms de traitement — sur une adresse dont le
+     * compteur répond déjà 429. Rapport de 1026 pour 1. La détente de zlib tourne dans le
+     * vivier de fils de libuv, non sur le fil principal : le retard de la boucle d'événements
+     * n'est que de 31 à 46 ms sur une requête isolée, et c'est à la CONCURRENCE que
+     * l'indisponibilité se voit — dix bombes ensemble, 861 ms et 177 ms de pire retard.
      *
      * Le plafond s'applique au flux DÉCOMPRESSÉ, ce qui interrompt la détente en cours.
      * Un mégaoctet couvre le plus gros corps légitime — un logo, borné à 700 000 caractères

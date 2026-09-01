@@ -154,11 +154,14 @@ exercices : parité des cellules, caractères absents des polices, trous de gaba
 Deux plafonds encadrent enfin l'impression : **deux Chromium à la fois** au plus, douze
 demandes en attente, et **soixante secondes** par impression. `pdf/file.ts` porte les deux
 mécanismes ; les trois valeurs, elles, sont au point d'appel, dans `pdf/index.ts`. Un export
-coûte 480 ms et **127 Mo au-dessus** du navigateur partagé, qui pèse déjà 242 Mo — mesuré en
-PSS cumulé, la somme des RSS comptant la mémoire partagée une fois par processus et doublant
-le résultat. Le plafond porte donc sur le surcoût : deux exports demandent 500 Mo, non 250.
-Sans plafond, les trente que la limitation de débit autorise par quart d'heure pouvaient
-partir ensemble et réclamer quatre gigaoctets. Le jeton est **transmis** au premier de la file, jamais rendu puis repris : décrémenter d'abord
+coûte 450 ms et **115 Mo au-dessus** du navigateur partagé, qui pèse déjà 133 Mo. Deux
+précautions, sans quoi le chiffre est faux d'un facteur deux : mesurer en PSS cumulé, la
+somme des RSS comptant la mémoire partagée une fois par processus ; et mesurer la **coquille
+sans tête**, celle que Playwright lance quand `CHROMIUM_PATH` est vide — le Chrome complet
+pèse presque le double (242 Mo au repos, 127 de surcoût). Le plafond porte donc sur le
+surcoût : deux exports demandent 360 Mo, non 230. Sans plafond, les trente que la limitation
+de débit autorise par quart d'heure pouvaient partir ensemble et réclamer trois gigaoctets et
+demi. Le jeton est **transmis** au premier de la file, jamais rendu puis repris : décrémenter d'abord
 laissait le compteur sous le plafond le temps d'une micro-tâche, et trois Chromium
 tournaient là où le plafond en promettait deux.
 

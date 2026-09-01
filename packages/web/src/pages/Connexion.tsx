@@ -31,9 +31,19 @@ export function Connexion() {
   return (
     <div
       className="hauteur-minimale-fenetre"
-      style={{ display: 'grid', placeItems: 'center', padding: 20 }}
+      /*
+       * `minmax(0, 1fr)` et non la piste implicite : une piste non bornée se dimensionne sur
+       * son propre contenu, et le `maxWidth: 100%` de la carte se résout alors contre elle —
+       * cent pour cent de 380 font 380. Sur un écran de 390 px, la place utile en fait 350 :
+       * le premier écran de l'application débordait de trente pixels.
+       */
+      style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', placeItems: 'center', padding: 20 }}
     >
-      <form className="carte" style={{ width: 380, maxWidth: '100%' }} onSubmit={soumettre}>
+      <form
+        className="carte"
+        style={{ width: 380, maxWidth: '100%', minWidth: 0 }}
+        onSubmit={soumettre}
+      >
         <div className="corps pile">
           <div style={{ marginBottom: 4 }}>
             <div style={{ fontSize: 22, fontWeight: 700, color: 'var(--bleu)', letterSpacing: 0.5 }}>

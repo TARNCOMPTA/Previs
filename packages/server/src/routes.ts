@@ -656,6 +656,10 @@ export function enregistrerRoutes(app: FastifyInstance, ctx: Contexte): void {
   app.post('/api/dossiers/:id/versions/:version/restaurer', async (requete, reponse) => {
     const identite = identifier(ctx.auth, requete);
     if (!exiger(identite, reponse, { ecriture: true })) return;
+    // Restaurer ÉCRIT une version complète, et coûte donc autant qu'un PUT : le plafond
+    // d'écriture manquait ici seul, ce qui laissait une boucle de restaurations gonfler
+    // l'historique sans borne, avec un corps de requête vide.
+    if (!sousPlafondEcriture(identite, reponse)) return;
     try {
       const { id, version } = requete.params as { id: string; version: string };
       return await ctx.depot.restaurer(id, Number(version), auteurDe(identite));

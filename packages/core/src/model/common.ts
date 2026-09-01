@@ -23,11 +23,18 @@ export const LIGNES_MAX = 500;
  *
  * Les deux plafonds ci-dessous portent sur le dossier entier. Ils sont larges : un dossier
  * réel de cabinet pèse 19 Ko à soixante lignes, et 176 Ko dans le cas extrême de cinq cents
- * lignes sur dix exercices. Ce qu'ils arrêtent est le dossier qui n'en est plus un.
+ * lignes sur dix exercices — le dossier modèle, lui, fait 8 257 octets. Ce qu'ils arrêtent
+ * est le dossier qui n'en est plus un.
  */
 export const LIGNES_TOTAL_MAX = 2000;
 
-/** Taille du dossier sérialisé, en octets. Huit fois le plus gros dossier plausible. */
+/**
+ * Taille du dossier sérialisé, en OCTETS UTF-8. Huit fois le plus gros dossier plausible.
+ *
+ * En octets, et non en unités de code UTF-16 : `JSON.stringify(d).length` comptait ces
+ * dernières, si bien qu'un dossier de « € » — un caractère, trois octets — passait à trois
+ * fois le plafond. Mesuré : 1 232 027 unités de code acceptées pour 3 432 049 octets réels.
+ */
 export const TAILLE_DOSSIER_MAX = 1_500_000;
 
 /** Identifiant stable d'une ligne. Généré côté client ou côté LLM. */

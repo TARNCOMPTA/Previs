@@ -127,6 +127,15 @@ export class LimiteurConnexions {
  * saturer le processeur du serveur. Un compte authentifié reste donc plafonné.
  */
 export class LimiteurDebit {
+  /*
+   * Fenêtre FIXE, ancrée au premier appel, et non glissante : le compteur repart à zéro dès
+   * que la fenêtre est passée. La conséquence à connaître — mesurée — est qu'un titulaire
+   * peut placer `maximum` appels à la fin d'une fenêtre et autant au début de la suivante,
+   * soit deux fois le nominal dans un quart d'heure glissant. C'est accepté : le plafond sert
+   * à empêcher qu'une boucle sature le serveur, pas à facturer un quota, et une fenêtre
+   * glissante exigerait de garder l'horodatage de chaque appel — donc 900 dates par titulaire
+   * pour l'écriture, dans un processus qui tient déjà tous ses compteurs en mémoire.
+   */
   private readonly appels = new Map<string, { compte: number; jusqua: number }>();
 
   constructor(

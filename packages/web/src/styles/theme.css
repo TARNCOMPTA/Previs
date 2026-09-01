@@ -668,6 +668,13 @@ input.poids-mois {
   /* L'intitulé garde de quoi se lire : c'est la colonne qui ne défile pas. */
   table.grille tbody td:first-child:not([colspan]) input.champ,
   table.grille.avec-detail tbody tr > td:nth-child(2):not([colspan]) input.champ { width: 148px; }
+
+  /*
+   * Sauf les douze poids d'une saisonnalité, qui vivent dans une grille « repeat(12, 1fr) »
+   * du panneau de détail : la règle ci-dessus, censée resserrer, leur donnait un plancher de
+   * 12 × 108 + 11 × 4 = 1 340 px. Ils suivent leur piste.
+   */
+  table.grille td input.poids-mois { width: 100%; min-width: 0; }
 }
 
 /*

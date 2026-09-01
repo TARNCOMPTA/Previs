@@ -197,6 +197,32 @@ const LISTES_DU_DOSSIER: ReadonlyArray<readonly [keyof Dossier, string]> = [
  *
  * Rend le motif du refus, ou `null` si le dossier tient dans les bornes.
  */
+/**
+ * Longueur d'une chaîne en OCTETS UTF-8, et non en unités de code UTF-16.
+ *
+ * `chaine.length` compte des unités de code : un « é » en vaut une pour deux octets, un
+ * « € » une pour trois. Le plafond, qui se veut un poids, laissait donc passer jusqu'à trois
+ * fois sa valeur — mesuré, 3,91 Mio stockés et acceptés, et le message de refus annonçait des
+ * kilo-octets qui n'en étaient pas. Le décompte s'arrête dès que le plafond est franchi :
+ * savoir de combien n'ajoute rien, et un dossier démesuré est justement celui qu'on ne veut
+ * pas parcourir en entier.
+ */
+function octetsUtf8(chaine: string, arret: number): number {
+  let n = 0;
+  for (let i = 0; i < chaine.length; i += 1) {
+    const c = chaine.charCodeAt(i);
+    if (c < 0x80) n += 1;
+    else if (c < 0x800) n += 2;
+    else if (c >= 0xd800 && c <= 0xdbff) {
+      // Paire de substitution : deux unités de code UTF-16 pour quatre octets UTF-8.
+      n += 4;
+      i += 1;
+    } else n += 3;
+    if (n > arret) return n;
+  }
+  return n;
+}
+
 export function verifierAmpleurDossier(dossier: Dossier): string | null {
   let lignes = 0;
   for (const [section, propriete] of LISTES_DU_DOSSIER) {
@@ -212,12 +238,14 @@ export function verifierAmpleurDossier(dossier: Dossier): string | null {
     );
   }
 
-  const octets = JSON.stringify(dossier).length;
+  const octets = octetsUtf8(JSON.stringify(dossier), TAILLE_DOSSIER_MAX);
   if (octets > TAILLE_DOSSIER_MAX) {
+    // Le poids exact n'est pas annoncé : le décompte s'arrête au plafond, et prétendre le
+    // connaître donnerait deux fois le même nombre.
     return (
-      `Ce dossier pèse ${Math.round(octets / 1024)} Ko, pour un maximum de ` +
-      `${Math.round(TAILLE_DOSSIER_MAX / 1024)} Ko. Les clés de répartition mensuelles et les ` +
-      'notes de ligne sont ce qui pèse le plus : en alléger quelques-unes suffit.'
+      `Ce dossier dépasse le poids maximal de ${Math.round(TAILLE_DOSSIER_MAX / 1024)} Ko. ` +
+      'Les clés de répartition mensuelles et les notes de ligne sont ce qui pèse le plus : ' +
+      'en alléger quelques-unes suffit.'
     );
   }
   return null;

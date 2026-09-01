@@ -104,6 +104,23 @@ describe('l’adaptation au téléphone', () => {
     expect(bloc?.[1]).toMatch(/input,\s*select,\s*textarea\s*\{\s*font-size:\s*16px/);
   });
 
+  it('toute grille centrée borne sa piste', () => {
+    // Une piste de grille non bornée se dimensionne sur son propre contenu, et le
+    // « maxWidth: 100% » de l'élément se résout alors CONTRE elle : cent pour cent de 380
+    // font 380, dans une place utile de 350. Le défaut est passé deux fois — la modale
+    // « Nouveau dossier », puis l'écran de connexion, qui est le premier de l'application.
+    // « placeItems: center » sur une grille est la signature du motif.
+    const fautifs: string[] = [];
+    for (const fichier of sourcesTsx(RACINE)) {
+      const source = readFileSync(fichier, 'utf8');
+      for (const [bloc] of source.matchAll(/style=\{\{[^}]*placeItems:\s*'center'[^}]*\}\}/g)) {
+        if (!/display:\s*'grid'/.test(bloc)) continue; // un flex centré n'a pas ce défaut
+        if (!/gridTemplateColumns/.test(bloc)) fautifs.push(fichier.slice(RACINE.length));
+      }
+    }
+    expect([...new Set(fautifs)]).toEqual([]);
+  });
+
   it('aucune hauteur de fenêtre n’est exprimée en « vh » seul', () => {
     // « vh » ignore la barre d'adresse : la barre d'indicateurs se retrouve dessous. La
     // parade est « 100dvh », précédé de « 100vh » comme repli pour les moteurs anciens —

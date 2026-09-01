@@ -141,6 +141,6 @@ describe('l’ampleur d’un dossier est bornée à l’écriture, jamais à la 
         { dossier: relu!.dossier, commentaire: 'Saisie', versionAttendue: relu!.version },
         CLAVIER,
       ),
-    ).rejects.toThrow(/pour un maximum de/);
+    ).rejects.toThrow(/dépasse le poids maximal de/);
   });
 });

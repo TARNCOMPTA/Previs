@@ -9,14 +9,18 @@
 /**
  * File d'attente à jetons : au plus `simultanees` impressions à la fois.
  *
- * Mesuré en PSS cumulé de l'arbre Chromium — la somme des RSS compte la mémoire partagée
- * une fois par processus et double le résultat : le navigateur partagé pèse 242 Mo à lui
- * seul, et un export en vol ajoute 127 Mo par-dessus (pointe à 369). Le plafond porte donc
- * sur le surcoût, pas sur le coût total : deux exports simultanés demandent 500 Mo, non
- * 250. Sans plafond, les trente exports qu'autorise la limitation de débit par quart
- * d'heure pouvaient partir ensemble et réclamer quatre gigaoctets — le VPS n'en a pas tant,
- * et c'est l'OOM. Les suivants attendent leur tour, ce qui est très préférable à un serveur
- * abattu.
+ * Mesuré en PSS cumulé de l'arbre Chromium, sur la COQUILLE SANS TÊTE — celle que Playwright
+ * lance quand `CHROMIUM_PATH` est vide, donc en production. Deux précautions, sans quoi le
+ * chiffre est faux d'un facteur deux : la somme des RSS compte la mémoire partagée une fois
+ * par processus et double le résultat ; et le Chrome complet pèse presque le double de la
+ * coquille (242 Mo au repos contre 133, mesurés tous deux ici).
+ *
+ * La coquille au repos pèse 133 Mo, et un export en vol ajoute 115 Mo par-dessus — pointe à
+ * 248. Le plafond porte donc sur le SURCOÛT et non sur le coût total : deux exports
+ * simultanés demandent environ 360 Mo, non 230. Sans plafond, les trente exports qu'autorise
+ * la limitation de débit par quart d'heure pouvaient partir ensemble et réclamer trois
+ * gigaoctets et demi — le VPS n'en a pas tant, et c'est l'OOM. Les suivants attendent leur
+ * tour, ce qui est très préférable à un serveur abattu.
  */
 export class FileImpressions {
   private enCours = 0;
