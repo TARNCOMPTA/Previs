@@ -1,5 +1,5 @@
 import { formaterEuros, formaterMontant, LIBELLES_REGIME } from '@previs/core';
-import { Suspense, useEffect, useState } from 'react';
+import { Suspense, useEffect, useRef, useState } from 'react';
 import {
   NavLink,
   Outlet,
@@ -28,6 +28,15 @@ const CLE_LARGEUR = 'previs.largeur-volet-resultat';
  * donc sur un seul écran, et le bouton de bascule le dit.
  */
 const LARGEUR_MINIMALE_SCISSION = 1180;
+
+/**
+ * Largeur en deçà de laquelle la navigation latérale cède la place à une barre d'onglets.
+ *
+ * Ses 208 px fixes prenaient plus de la moitié d'un écran de téléphone, pour un contenu qui
+ * tient dans une barre horizontale. Le seuil est plus bas que celui de la vue scindée : une
+ * fenêtre de 900 px n'a pas la place des deux volets, mais elle a celle de la colonne.
+ */
+const LARGEUR_MINIMALE_NAVIGATION = 860;
 
 /** Libellé de l'état d'enregistrement affiché en permanence dans l'en-tête. */
 function libelleEtat(etat: string): { texte: string; ton: 'neutre' | 'attente' | 'erreur' } {
@@ -83,6 +92,7 @@ export function CoquilleDossier() {
   const [requete, setRequete] = useSearchParams();
   const [scissionVoulue, setScissionVoulue] = useState(lirePreference);
   const [assezLarge, setAssezLarge] = useState(fenetreAssezLarge);
+  const [navLaterale, setNavLaterale] = useState(fenetreAssezLargePourNav);
 
   useEffect(() => {
     const media = window.matchMedia(`(min-width: ${LARGEUR_MINIMALE_SCISSION}px)`);
@@ -90,6 +100,17 @@ export function CoquilleDossier() {
       // Franchir le seuil démonte un volet : la frappe en cours doit être validée avant.
       validerLaFrappeEnCours();
       setAssezLarge(media.matches);
+    };
+    media.addEventListener('change', surChangement);
+    return () => media.removeEventListener('change', surChangement);
+  }, []);
+
+  useEffect(() => {
+    const media = window.matchMedia(`(min-width: ${LARGEUR_MINIMALE_NAVIGATION}px)`);
+    const surChangement = () => {
+      // Même raison : passer de la colonne à la barre d'onglets démonte l'écran courant.
+      validerLaFrappeEnCours();
+      setNavLaterale(media.matches);
     };
     media.addEventListener('change', surChangement);
     return () => media.removeEventListener('change', surChangement);
@@ -219,10 +240,10 @@ export function CoquilleDossier() {
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
+    <div className="hauteur-fenetre" style={{ display: 'flex', flexDirection: 'column' }}>
       {/* ─── En-tête ─────────────────────────────────────────────────────── */}
       <header
-        className="rangee sans-impression"
+        className="rangee entete-dossier sans-impression"
         style={{
           padding: '8px 16px',
           borderBottom: '1px solid var(--trait)',
@@ -245,68 +266,87 @@ export function CoquilleDossier() {
 
         <div className="separateur" />
 
-        <span
-          className="discret"
-          style={{ color: statut.ton === 'erreur' ? 'var(--erreur)' : undefined }}
-          title={`Version ${fiche.version}`}
-        >
-          {statut.texte}
-        </span>
+        {/*
+         * Les actions forment leur propre rang. Sur un téléphone il défile plutôt que de
+         * s'empiler : huit commandes repliées prenaient deux rangs de quarante pixels, et
+         * l'en-tête à lui seul mangeait un cinquième de l'écran avant le premier chiffre.
+         */}
+        <div className="rangee actions-dossier">
+          <span
+            className="discret"
+            style={{ color: statut.ton === 'erreur' ? 'var(--erreur)' : undefined }}
+            title={`Version ${fiche.version}`}
+          >
+            {statut.texte}
+          </span>
 
-        <button className="bouton discret" onClick={annuler} disabled={pileAnnulation.length === 0} title="Annuler (Ctrl+Z)">
-          ↶
-        </button>
-        <button
-          className="bouton discret"
-          onClick={retablir}
-          disabled={pileRetablissement.length === 0}
-          title="Rétablir (Ctrl+Maj+Z)"
-        >
-          ↷
-        </button>
+          <button className="bouton discret" onClick={annuler} disabled={pileAnnulation.length === 0} title="Annuler (Ctrl+Z)">
+            ↶
+          </button>
+          <button
+            className="bouton discret"
+            onClick={retablir}
+            disabled={pileRetablissement.length === 0}
+            title="Rétablir (Ctrl+Maj+Z)"
+          >
+            ↷
+          </button>
 
-        <NavLink
-          to={`/dossiers/${fiche.id}/etats/controles`}
-          className="badge"
-          style={{ textDecoration: 'none' }}
-          title={coherent ? 'Tous les contrôles sont validés' : `${nbErreurs} contrôle(s) en erreur`}
-        >
-          <span className={`pastille ${coherent ? 'succes' : 'erreur'}`} />
-          {coherent ? 'Cohérent' : `${nbErreurs} écart(s)`}
-        </NavLink>
+          <NavLink
+            to={`/dossiers/${fiche.id}/etats/controles`}
+            className="badge"
+            style={{ textDecoration: 'none' }}
+            title={coherent ? 'Tous les contrôles sont validés' : `${nbErreurs} contrôle(s) en erreur`}
+          >
+            <span className={`pastille ${coherent ? 'succes' : 'erreur'}`} />
+            {coherent ? 'Cohérent' : `${nbErreurs} écart(s)`}
+          </NavLink>
 
-        <button
-          className={`bouton ${scinde ? '' : 'discret'}`}
-          onClick={basculerScission}
-          disabled={!assezLarge}
-          aria-pressed={scinde}
-          title={
-            assezLarge
-              ? scinde
-                ? 'Revenir à un seul écran'
-                : 'Afficher la saisie et le résultat côte à côte'
-              : `La vue scindée demande une fenêtre de ${LARGEUR_MINIMALE_SCISSION} pixels de large`
-          }
-        >
-          {scinde ? '▮▮' : '▮'}
-        </button>
+          {/*
+            La bascule ne s'affiche que si la fenêtre peut scinder. Un bouton désactivé en
+            permanence est un encombrement sur un téléphone, et il n'y explique rien : la
+            largeur ne s'y change pas.
+          */}
+          {assezLarge ? (
+            <button
+              className={`bouton ${scinde ? '' : 'discret'}`}
+              onClick={basculerScission}
+              aria-pressed={scinde}
+              title={scinde ? 'Revenir à un seul écran' : 'Afficher la saisie et le résultat côte à côte'}
+            >
+              {scinde ? '▮▮' : '▮'}
+            </button>
+          ) : null}
 
-        <button className="bouton discret" onClick={() => setVersionsOuvertes(true)} title="Historique des versions">
-          Historique
-        </button>
-        <button className="bouton principal" onClick={() => void exporter()} disabled={exportEnCours}>
-          {exportEnCours ? 'Génération…' : 'Exporter le dossier'}
-        </button>
-        <button className="bouton discret" onClick={basculerTheme} title="Changer de thème">
-          {theme === 'clair' ? '◐' : '◑'}
-        </button>
-        <button
-          className="bouton discret"
-          onClick={() => void deconnecter()}
-          title={`${utilisateur?.nom} — se déconnecter`}
-        >
-          ⏻
-        </button>
+          <button className="bouton discret" onClick={() => setVersionsOuvertes(true)} title="Historique des versions">
+            {/* Deux libellés, un seul visible : couper le mot en deux enfants ferait jouer
+                le « gap » du bouton entre eux, et l'on lisait « Histo rique ». */}
+            <span className="sur-grand-ecran">Historique</span>
+            {/* « Versions » plutôt qu'« Histo » : un mot entier, qui dit la même chose. */}
+            <span className="sur-petit-ecran">Versions</span>
+          </button>
+          <button className="bouton principal" onClick={() => void exporter()} disabled={exportEnCours}>
+            {exportEnCours ? (
+              'Génération…'
+            ) : (
+              <>
+                <span className="sur-grand-ecran">Exporter le dossier</span>
+                <span className="sur-petit-ecran">Exporter</span>
+              </>
+            )}
+          </button>
+          <button className="bouton discret" onClick={basculerTheme} title="Changer de thème">
+            {theme === 'clair' ? '◐' : '◑'}
+          </button>
+          <button
+            className="bouton discret"
+            onClick={() => void deconnecter()}
+            title={`${utilisateur?.nom} — se déconnecter`}
+          >
+            ⏻
+          </button>
+        </div>
+
       </header>
 
       {/* ─── Corps ───────────────────────────────────────────────────────── */}
@@ -315,7 +355,7 @@ export function CoquilleDossier() {
           La navigation latérale s'efface en vue scindée : ses 208 px sont ce qui manque aux
           deux volets pour tenir, et chaque volet porte alors son propre sélecteur d'écran.
         */}
-        {scinde ? null : (
+        {scinde || !navLaterale ? null : (
           <nav
             className="sans-impression"
             style={{
@@ -385,8 +425,20 @@ export function CoquilleDossier() {
               }
             />
           ) : (
-            <main style={{ flex: 1, overflowY: 'auto', padding: 18, minWidth: 0 }}>
+            <main style={{ flex: 1, overflowY: 'auto', padding: navLaterale ? 18 : 12, minWidth: 0 }}>
               <div className="pile" style={{ maxWidth: 1180, margin: '0 auto' }}>
+                {/*
+                  Sans la colonne, il faut bien un moyen d'atteindre les autres écrans : la
+                  barre d'onglets de la vue scindée fait l'affaire, augmentée des états.
+                */}
+                {navLaterale ? null : (
+                  <OngletsSaisie
+                    dossierId={fiche.id}
+                    courant={segment}
+                    recherche={emplacement.search}
+                    avecEtats
+                  />
+                )}
                 <Outlet />
               </div>
             </main>
@@ -396,7 +448,7 @@ export function CoquilleDossier() {
 
       {/* ─── Indicateurs permanents ──────────────────────────────────────── */}
       <footer
-        className="rangee sans-impression"
+        className="rangee indicateurs sans-impression"
         style={{
           gap: 24,
           padding: '7px 18px',
@@ -427,7 +479,9 @@ export function CoquilleDossier() {
           alerte={(resultats?.bilans.some((b) => Math.abs(b.ecart) > 1) ?? false)}
         />
         <div className="separateur" />
-        <span className="discret">Version {fiche.version} · modifié par {fiche.modifiePar}</span>
+        <span className="discret sur-grand-ecran">
+          Version {fiche.version} · modifié par {fiche.modifiePar}
+        </span>
       </footer>
 
       {versionsOuvertes ? (
@@ -444,18 +498,46 @@ export function CoquilleDossier() {
  * reportée sur chaque lien : changer d'écran de saisie ne doit pas refermer le tableau
  * qu'on avait ouvert à droite.
  */
+/**
+ * La barre d'onglets de la saisie.
+ *
+ * `avecEtats` y ajoute les états financiers : c'est ce qui remplace la navigation latérale
+ * sur un écran trop étroit pour ses 208 px fixes. En vue scindée, au contraire, les états
+ * ont leur propre sélecteur dans le volet de droite et n'ont rien à faire ici.
+ */
 function OngletsSaisie({
   dossierId,
   courant,
   recherche,
+  avecEtats,
 }: {
   dossierId: string;
   courant: string;
   recherche: string;
+  avecEtats?: boolean;
 }) {
+  const barre = useRef<HTMLDivElement>(null);
+
+  /*
+   * L'onglet actif est amené dans la vue.
+   *
+   * Sur un téléphone la barre défile, et elle s'ouvre à zéro : ouvrir « Bilan et BFR »
+   * montrait une barre commençant à « Bord », sans rien pour dire où l'on se trouve.
+   * Le défilement est calculé plutôt que confié à `scrollIntoView`, qui fait aussi défiler
+   * la PAGE — on aurait perdu le titre de l'écran à chaque navigation.
+   */
+  useEffect(() => {
+    const conteneur = barre.current;
+    const actif = conteneur?.querySelector<HTMLElement>('[data-actif="1"]');
+    if (!conteneur || !actif) return;
+    const centre = actif.offsetLeft - (conteneur.clientWidth - actif.offsetWidth) / 2;
+    conteneur.scrollLeft = Math.max(0, centre);
+  }, [courant]);
+
   return (
     <div
-      className="rangee sans-impression"
+      ref={barre}
+      className="rangee onglets-ecrans sans-impression"
       style={{
         gap: 2,
         marginBottom: 14,
@@ -469,6 +551,7 @@ function OngletsSaisie({
         return (
           <NavLink
             key={section.chemin}
+            data-actif={actif ? '1' : undefined}
             to={{ pathname: `/dossiers/${dossierId}/${section.chemin}`, search: recherche }}
             style={{
               padding: '5px 10px',
@@ -485,6 +568,37 @@ function OngletsSaisie({
           </NavLink>
         );
       })}
+
+      {avecEtats ? (
+        <>
+          <span
+            aria-hidden
+            style={{ width: 1, alignSelf: 'stretch', background: 'var(--trait)', margin: '0 6px' }}
+          />
+          {ETATS.map((etat) => {
+            const actif = etat.chemin === courant;
+            return (
+              <NavLink
+                key={etat.chemin}
+                data-actif={actif ? '1' : undefined}
+                to={`/dossiers/${dossierId}/etats/${etat.chemin}`}
+                style={{
+                  padding: '5px 10px',
+                  borderRadius: 'var(--rayon)',
+                  fontSize: 13,
+                  fontWeight: actif ? 600 : 400,
+                  color: actif ? 'var(--turquoise)' : 'var(--texte-doux)',
+                  background: actif ? 'var(--turquoise-clair)' : 'transparent',
+                  textDecoration: 'none',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {etat.court ?? etat.libelle}
+              </NavLink>
+            );
+          })}
+        </>
+      ) : null}
     </div>
   );
 }
@@ -509,6 +623,10 @@ function ecrirePreference(valeur: boolean): void {
 
 function fenetreAssezLarge(): boolean {
   return window.matchMedia(`(min-width: ${LARGEUR_MINIMALE_SCISSION}px)`).matches;
+}
+
+function fenetreAssezLargePourNav(): boolean {
+  return window.matchMedia(`(min-width: ${LARGEUR_MINIMALE_NAVIGATION}px)`).matches;
 }
 
 /**

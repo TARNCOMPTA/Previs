@@ -37,7 +37,7 @@ export function ListeDossiers() {
   const lectureSeule = utilisateur?.role === 'lecteur';
 
   return (
-    <div style={{ minHeight: '100vh' }}>
+    <div className="hauteur-minimale-fenetre">
       <header
         className="rangee"
         style={{
@@ -48,8 +48,12 @@ export function ListeDossiers() {
         }}
       >
         <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--bleu)' }}>Previs</div>
-        <div className="discret">Prévisionnel financier — TARN COMPTA</div>
+        {/* La signature du cabinet est de l'ornement : elle cède la place sur un téléphone. */}
+        <div className="discret sur-grand-ecran">Prévisionnel financier — TARN COMPTA</div>
         <div className="separateur" />
+        {/* Même parti que dans la coquille d'un dossier : un rang qui défile plutôt que
+            trois rangs empilés, qui prenaient cent soixante pixels avant le premier titre. */}
+        <div className="rangee actions-dossier">
         {utilisateur?.role === 'admin' ? (
           <button className="bouton discret" onClick={() => naviguer('/administration')}>
             Administration
@@ -68,6 +72,7 @@ export function ListeDossiers() {
         <button className="bouton discret" onClick={() => void deconnecter()}>
           Se déconnecter
         </button>
+        </div>
       </header>
 
       <div style={{ maxWidth: 1080, margin: '0 auto', padding: 20 }} className="pile">
@@ -75,16 +80,24 @@ export function ListeDossiers() {
 
         <div className="rangee espace">
           <h1>Dossiers prévisionnels</h1>
-          <div className="rangee" style={{ gap: 8 }}>
+          <div className="rangee" style={{ gap: 8, flex: '1 1 260px', justifyContent: 'flex-end', flexWrap: 'nowrap' }}>
             <input
               className="champ"
-              style={{ width: 240 }}
+              // Une largeur fixe débordait d'un écran de téléphone : le champ prend
+              // maintenant la place restante, sans dépasser sa largeur de confort.
+              style={{ flex: '1 1 auto', maxWidth: 240, minWidth: 0 }}
               placeholder="Rechercher un dossier…"
               value={recherche}
               onChange={(e) => setRecherche(e.target.value)}
             />
-            <button className="bouton principal" onClick={() => setCreation(true)} disabled={lectureSeule}>
-              Nouveau dossier
+            <button
+              className="bouton principal"
+              style={{ flex: 'none', whiteSpace: 'nowrap' }}
+              onClick={() => setCreation(true)}
+              disabled={lectureSeule}
+            >
+              <span className="sur-grand-ecran">Nouveau dossier</span>
+              <span className="sur-petit-ecran">Nouveau</span>
             </button>
           </div>
         </div>
@@ -108,11 +121,11 @@ export function ListeDossiers() {
                 <tr>
                   <th>Dossier</th>
                   <th>Client</th>
-                  <th>Régime</th>
-                  <th>Type</th>
-                  <th>Période</th>
-                  <th>CA du 1ᵉʳ exercice</th>
-                  <th>Modifié</th>
+                  <th className="sur-grand-ecran">Régime</th>
+                  <th className="sur-grand-ecran">Type</th>
+                  <th className="sur-grand-ecran">Période</th>
+                  <th className="sur-grand-ecran">CA du 1ᵉʳ exercice</th>
+                  <th className="sur-grand-ecran">Modifié</th>
                   <th />
                 </tr>
               </thead>
@@ -126,15 +139,15 @@ export function ListeDossiers() {
                       </span>
                     </td>
                     <td style={{ textAlign: 'left' }}>{d.client || '—'}</td>
-                    <td style={{ textAlign: 'left' }}>{d.regime}</td>
-                    <td style={{ textAlign: 'left' }}>
+                    <td className="sur-grand-ecran" style={{ textAlign: 'left' }}>{d.regime}</td>
+                    <td className="sur-grand-ecran" style={{ textAlign: 'left' }}>
                       {LIBELLES_TYPE_DOSSIER[d.typeDossier as keyof typeof LIBELLES_TYPE_DOSSIER] ?? d.typeDossier}
                     </td>
-                    <td style={{ textAlign: 'left' }}>
+                    <td className="sur-grand-ecran" style={{ textAlign: 'left' }}>
                       {d.anneeDebut} · {d.nbExercices} ex.
                     </td>
-                    <td>{formaterEuros(d.caPremierExercice)}</td>
-                    <td style={{ textAlign: 'left' }} className="discret">
+                    <td className="sur-grand-ecran">{formaterEuros(d.caPremierExercice)}</td>
+                    <td style={{ textAlign: 'left' }} className="discret sur-grand-ecran">
                       {new Date(d.modifieLe).toLocaleDateString('fr-FR')} — {d.modifiePar}
                     </td>
                     <td onClick={(e) => e.stopPropagation()}>

@@ -245,6 +245,42 @@ Deux écueils propres à la **vue scindée** (`web/src/layout/`), qui ne se devi
    1 180 px — doit valider la frappe en cours d'abord, sans quoi la saisie revient à sa
    valeur précédente sous les yeux de l'utilisateur.
 
+### Le cinquième point délicat : le téléphone
+
+L'interface a été dessinée pour un écran de bureau, et n'avait qu'une seule règle de média —
+celle de l'impression. Sur un téléphone, tout en-tête débordait : « Se déconnecter » sortait
+de l'écran et le bouton « Nouveau dossier » devenait inatteignable. Un seul seuil, **760 px**,
+porte l'adaptation ; au-delà, rien ne change.
+
+Cinq points qui ne se devinent pas :
+
+1. **`.rangee` ne se replie qu'en dessous du seuil**, et c'était la cause première : chaque
+   en-tête de l'application en est une. Là où le repli donnerait trop de rangs — les huit
+   commandes d'un dossier, les quatorze onglets d'écran —, le rang **défile** au lieu de
+   s'empiler (`.actions-dossier`, `.onglets-ecrans`), avec un dégradé de fin qui le dit.
+   L'onglet actif est ramené dans la vue par un calcul de `scrollLeft`, jamais par
+   `scrollIntoView` : celui-ci ferait aussi défiler la page.
+2. **Seize pixels pour un champ, et pas moins.** En deçà, Safari sur iOS AGRANDIT la page à
+   la prise de focus et ne la réduit jamais : saisir un montant laissait l'écran zoomé.
+3. **`100dvh`, jamais `100vh`** (`.hauteur-fenetre`) : `vh` ignore la barre d'adresse, et la
+   barre d'indicateurs se retrouvait dessous.
+4. **Une carte fait défiler son contenu** (`.carte { overflow-x: auto }`) plutôt que de
+   pousser la page. La moitié des tableaux n'ont pas de `.defilement-horizontal` autour
+   d'eux ; sur un téléphone, la liste des dossiers portait la fenêtre de mise en page de 390
+   à 693 px et TOUTE l'application se retrouvait dézoomée. La règle est au conteneur pour
+   qu'un tableau ajouté demain en hérite.
+5. **Les champs d'une grille sont bornés en largeur.** Un `input` sans largeur explicite vaut
+   vingt caractères, soit 229 px à seize de corps : les colonnes se dimensionnant sur le
+   contenu, la grille des charges mesurait 1663 px dans un conteneur de 340. Bornés, 1096.
+
+Deux seuils, et non un seul : la vue scindée demande 1 180 px, la navigation latérale 860.
+Entre les deux, la colonne reste et les volets se replient.
+
+Un piège de mise en page à connaître, qui ne concerne pas que le téléphone : une modale
+centrée par une grille dont la piste n'est pas bornée se dimensionne sur son propre contenu,
+et son `max-width: 100%` se résout alors contre elle — cent pour cent de 520 font 520. D'où
+`grid-template-columns: minmax(0, 1fr)` sur le voile.
+
 Et un défaut préexistant, qu'il vaut mieux connaître : `overflow-x: auto` fait de
 `.defilement-horizontal` un conteneur de défilement sur **les deux** axes, de hauteur libre.
 Un en-tête de tableau en `position: sticky; top: 0` s'y accroche donc et ne colle jamais.

@@ -492,6 +492,192 @@ table.grille td.zone-vide, table.etat td.zone-vide { padding: 28px 16px; }
  * il n'en reste qu'un.
  */
 
+/*
+ * Deux libellés pour une même commande, un seul visible.
+ *
+ * « .sur-grand-ecran » disparaît sous 760 px, « .sur-petit-ecran » n'apparaît qu'en deçà.
+ * Deux éléments plutôt qu'un mot coupé en deux : les boutons sont des « inline-flex » avec
+ * un « gap », qui se serait glissé au milieu du mot — on lisait « Histo rique ».
+ */
+.sur-petit-ecran { display: none; }
+
+/* ─── Téléphones et petites tablettes ──────────────────────────────────────── */
+
+/*
+ * L'interface a été dessinée pour un écran de bureau, et une seule règle de média existait
+ * ici : celle de l'impression. Sur un téléphone, tout en-tête débordait — « Se déconnecter »
+ * sortait de l'écran, et le bouton « Nouveau dossier » devenait inatteignable.
+ *
+ * Le seuil de 760 px est celui d'un téléphone en paysage. Au-delà, rien ne change : ces
+ * règles ne touchent pas l'écran de travail du cabinet.
+ */
+@media (max-width: 760px) {
+  /*
+   * La cause première : « .rangee » ne se replie pas. Chaque en-tête de l'application en
+   * est une, et chacun poussait ses derniers boutons hors de l'écran.
+   */
+  .rangee { flex-wrap: wrap; }
+
+  /*
+   * Un séparateur qui prend toute la place restante force un retour à la ligne dès que la
+   * rangée se replie : c'est ce qu'on veut, il sépare bien deux groupes.
+   */
+  .rangee > .separateur { flex-basis: 100%; height: 0; }
+
+  /*
+   * Des cibles que l'on peut toucher. Un bouton discret mesurait 24 px de haut : c'est la
+   * moitié de ce qu'un doigt vise, et deux boutons voisins étaient indiscernables.
+   */
+  .bouton { min-height: 40px; padding: 8px 14px; }
+  .bouton.discret { min-height: 40px; padding: 8px 12px; }
+  .bouton.petit { min-height: 34px; padding: 6px 10px; }
+
+  /*
+   * Seize pixels, et pas moins : en deçà, Safari sur iOS AGRANDIT la page au moment où le
+   * champ prend le focus, et ne la réduit jamais. La saisie d'un montant laissait donc
+   * l'écran zoomé sur une colonne. C'est la correction la plus discrète et la plus utile.
+   */
+  .champ,
+  input,
+  select,
+  textarea { font-size: 16px; }
+  .champ { padding: 9px 10px; }
+
+  /* Les grilles de champs passent en une colonne plutôt que d'écraser deux. */
+  .grille-champs { grid-template-columns: 1fr; gap: 10px; }
+
+  /* Le garnissage des cartes, resserré : dix-huit pixels de chaque côté, c'est un dixième
+     de la largeur utile d'un téléphone. */
+  .carte > header { padding: 10px 12px; }
+  .carte > .corps { padding: 12px; }
+
+  /*
+   * La colonne d'intitulés figée mesurait 190 px sur les 390 d'un écran de téléphone : il
+   * ne restait pas de quoi lire un montant. Elle en garde 120, assez pour un libellé
+   * abrégé, et le reste défile.
+   */
+  .defilement-horizontal table.etat th:first-child,
+  .defilement-horizontal table.etat td:first-child { min-width: 120px; }
+  table.grille th, table.etat th { padding: 6px 8px; }
+  table.grille td, table.etat td { padding: 5px 8px; }
+
+  /* La barre d'indicateurs se replie plutôt que de déborder. */
+  .indicateurs { gap: 12px 16px; }
+
+  /* Ce qui est de l'ornement cède la place : la hauteur est la ressource rare. */
+  .sur-grand-ecran { display: none !important; }
+  .sur-petit-ecran { display: inline; }
+
+  /*
+   * Les onglets d'écran défilent sur une seule ligne plutôt que de s'empiler.
+   *
+   * Quatorze onglets repliés prenaient quatre rangs, soit cent quarante pixels — un
+   * sixième de la hauteur d'un téléphone, avant même le premier chiffre. Une barre qui
+   * défile est le geste attendu sur un écran tactile, et elle en coûte quarante.
+   */
+  .onglets-ecrans {
+    flex-wrap: nowrap !important;
+    overflow-x: auto;
+    scrollbar-width: none;
+    /* Le débordement est horizontal, et lui seul : sans cela le rang défilerait aussi
+       verticalement, et les onglets se décaleraient d'un pixel sous le doigt. */
+    overflow-y: hidden;
+  }
+  .onglets-ecrans::-webkit-scrollbar { display: none; }
+  .onglets-ecrans > * { flex: none; }
+
+  /* Les actions de l'en-tête défilent de la même façon, et pour la même raison. */
+  .actions-dossier {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    flex: 1 1 100%;
+    /* Le défilement horizontal coupe les ombres de survol au ras : un peu d'air dessous. */
+    padding-bottom: 2px;
+  }
+  .actions-dossier::-webkit-scrollbar { display: none; }
+  .actions-dossier > * { flex: none; }
+
+  /*
+   * Les cases à cocher mesuraient treize pixels de côté — un tiers de ce qu'un doigt vise.
+   * Vingt-deux, avec la zone de touche du libellé qui les accompagne, suffisent.
+   */
+  input[type='checkbox'],
+  input[type='radio'] {
+    width: 22px;
+    height: 22px;
+    accent-color: var(--bleu);
+  }
+
+  /* Un badge qui navigue est une cible, pas une étiquette : il en prend la hauteur. */
+  a.badge { min-height: 34px; padding: 6px 10px; }
+
+  /*
+   * Une carte fait défiler son contenu plutôt que de pousser la page.
+   *
+   * La moitié des tableaux du logiciel n'ont pas de « .defilement-horizontal » autour
+   * d'eux — la liste des dossiers, les contrôles, l'administration, l'historique des
+   * versions. Sur un téléphone, ils élargissaient la fenêtre de mise en page : mesuré, la
+   * liste des dossiers la portait de 390 à 693 px, et TOUTE l'application se retrouvait
+   * dézoomée, texte compris.
+   *
+   * La règle est posée sur le conteneur et non sur chaque tableau : un tableau ajouté
+   * demain en hérite sans qu'on ait à y penser. Les tableaux qui ont déjà leur propre
+   * conteneur de défilement gardent le leur — c'est le plus proche qui l'emporte.
+   */
+  .carte,
+  .carte > .corps { overflow-x: auto; }
+
+  /*
+   * Un rang qui défile le dit : sans ce dégradé, le dernier libellé paraît coupé par
+   * accident. Le masque n'est posé que sur les rangs dont le contenu dépasse réellement —
+   * « scroll-timeline » n'étant pas partout, on l'approche en ne masquant que la fin, ce
+   * qui ne se voit pas quand il n'y a rien à faire défiler.
+   */
+  .onglets-ecrans,
+  .actions-dossier {
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 22px), transparent);
+    mask-image: linear-gradient(to right, #000 calc(100% - 22px), transparent);
+  }
+
+  /* Les deux boutons d'une cellule d'action restent côte à côte. */
+  td .rangee { flex-wrap: nowrap; }
+
+  /*
+   * Les champs d'une grille n'imposent plus leur largeur naturelle.
+   *
+   * Un « input » sans largeur explicite vaut vingt caractères, soit 229 px avec un corps
+   * de seize : les colonnes se dimensionnant sur le contenu (« min-width: max-content »),
+   * la grille des charges mesurait 1663 px dans un conteneur de 340 — cinq écrans de
+   * défilement pour atteindre le premier montant. Bornés, il en reste deux, et la colonne
+   * d'intitulés reste figée à gauche.
+   */
+  table.grille td input.champ,
+  table.grille td select.champ { width: 108px; min-width: 0; }
+
+  /* L'intitulé garde de quoi se lire : c'est la colonne qui ne défile pas. */
+  table.grille tbody td:first-child:not([colspan]) input.champ,
+  table.grille.avec-detail tbody tr > td:nth-child(2):not([colspan]) input.champ { width: 148px; }
+}
+
+/*
+ * Hauteur de la fenêtre visible, et non de l'écran.
+ *
+ * « 100vh » compte la barre d'adresse de Safari comme si elle n'était pas là : le bas de
+ * l'application — la barre d'indicateurs — se retrouvait masqué sous elle. « 100dvh » suit
+ * la fenêtre réellement visible ; la première déclaration reste pour les navigateurs qui
+ * ne la connaissent pas.
+ */
+.hauteur-fenetre {
+  height: 100vh;
+  height: 100dvh;
+}
+.hauteur-minimale-fenetre {
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
 @media print {
   .sans-impression { display: none !important; }
   /* À l'impression, les deux volets se suivent : rien ne défile sur du papier. */

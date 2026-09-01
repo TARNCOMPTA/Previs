@@ -102,6 +102,13 @@ export function Modale({
         inset: 0,
         background: 'rgba(12, 16, 28, 0.5)',
         display: 'grid',
+        /*
+         * La piste doit être bornée, sinon elle prend la taille de son contenu — 520 px —
+         * et le `max-width: 100%` de la modale se résout contre elle : cent pour cent de
+         * 520 font 520. La modale débordait ainsi d'un écran de téléphone, bouton
+         * « Créer le dossier » compris. `minmax(0, 1fr)` la ramène à la largeur utile.
+         */
+        gridTemplateColumns: 'minmax(0, 1fr)',
         placeItems: 'center',
         zIndex: 100,
         padding: 20,
@@ -113,7 +120,23 @@ export function Modale({
         aria-label={titre}
         onClick={(e) => e.stopPropagation()}
         className="carte"
-        style={{ width: largeur, maxWidth: '100%', maxHeight: '90vh', overflow: 'auto', boxShadow: 'var(--ombre-forte)' }}
+        /*
+         * `minWidth: 0` n'est pas décoratif : la modale est un élément de grille, dont le
+         * `min-width` vaut `auto` par défaut — il refuse de descendre sous la largeur
+         * minimale de son contenu, et `maxWidth` perd. Sur un téléphone, la modale
+         * « Nouveau dossier » débordait ainsi de l'écran, bouton « Créer » compris.
+         *
+         * `dvh` plutôt que `vh` : la barre d'adresse de Safari ne compte pas dans `vh`, et
+         * le bas de la modale se retrouvait dessous.
+         */
+        style={{
+          width: largeur,
+          maxWidth: '100%',
+          minWidth: 0,
+          maxHeight: 'min(90vh, 90dvh)',
+          overflow: 'auto',
+          boxShadow: 'var(--ombre-forte)',
+        }}
       >
         <header>
           <h2>{titre}</h2>
