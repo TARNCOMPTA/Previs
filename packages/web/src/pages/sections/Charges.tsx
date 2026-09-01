@@ -166,7 +166,8 @@ function CorpsCharges({ dossier, resultats, annees, modifierLigne, ajouterLigne,
           <RepartitionMensuelle
             valeur={l.repartition}
             onChange={(v) => majCharge(l.id, { repartition: v })}
-            nbExercices={nbExercices}
+            exercices={resultats.exercices}
+            montantsAnnuels={l.montants}
           />
         </div>
     ),

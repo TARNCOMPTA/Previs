@@ -32,7 +32,11 @@ import {
 } from './immobilisations.js';
 import { cotisationsExploitant, calculerTva, echeancierImpot, impotSocietes } from './fiscal.js';
 import { construireExercices, dansHorizon, libellesMois, nbMoisTotal } from './periodes.js';
-import { decalerSerie, repartirSurCalendrier } from './repartition.js';
+import {
+  decalerSerie,
+  repartirSurCalendrier,
+  totauxAnnuelsDepuisRepartition,
+} from './repartition.js';
 import type {
   Bfr,
   Bilan,
@@ -60,12 +64,18 @@ function calculerExceptionnels(dossier: Dossier, exercices: ReturnType<typeof co
 
   for (const ligne of dossier.autres.exceptionnels) {
     if (!ligne.actif) continue;
-    const mensuel = repartirSurCalendrier(ligne.montants, ligne.repartition, exercices);
+    // En répartition mensuelle, la grille PRIME sur le montant annuel — c'est la règle du
+    // moteur, et les charges comme les recettes en tirent leurs totaux de la même façon.
+    // Prendre ici l'annuel brut faisait divergier les deux moitiés du calcul : le compte de
+    // résultat portait le montant saisi et la trésorerie celui de la grille, pour un écart
+    // de bilan du montant exact de la différence et quatre contrôles en échec.
+    const montants = totauxAnnuelsDepuisRepartition(ligne.montants, ligne.repartition, exercices);
+    const mensuel = repartirSurCalendrier(montants, ligne.repartition, exercices);
     const taux = assujetti ? ligne.tauxTva : 0;
 
     for (let i = 0; i < n; i++) {
-      if (ligne.sens === 'produit') produits[i] += val(ligne.montants, i);
-      else charges[i] += val(ligne.montants, i);
+      if (ligne.sens === 'produit') produits[i] += val(montants, i);
+      else charges[i] += val(montants, i);
     }
 
     for (let m = 0; m < horizon; m++) {
@@ -113,10 +123,14 @@ function calculerDistributions(dossier: Dossier, exercices: ReturnType<typeof co
 
   for (const ligne of dossier.autres.distributions) {
     if (!ligne.actif) continue;
-    const serie = repartirSurCalendrier(ligne.montants, ligne.repartition, exercices);
+    // Même règle que pour les exceptionnels : la grille mensuelle prime, et l'annuel doit en
+    // découler, sinon le résultat distribuable et la trésorerie ne parlent plus du même
+    // montant.
+    const montants = totauxAnnuelsDepuisRepartition(ligne.montants, ligne.repartition, exercices);
+    const serie = repartirSurCalendrier(montants, ligne.repartition, exercices);
     for (let m = 0; m < horizon; m++) mensuel[m] += serie[m];
     for (let i = 0; i < n; i++) {
-      const montant = val(ligne.montants, i);
+      const montant = val(montants, i);
       if (ligne.type === 'dividendes') dividendes[i] += montant;
       else prelevements[i] += montant;
     }

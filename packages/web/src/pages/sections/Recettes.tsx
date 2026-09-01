@@ -76,7 +76,8 @@ function CorpsRecettes({ dossier, resultats, annees, modifierLigne, ajouterLigne
           <RepartitionMensuelle
             valeur={l.repartition}
             onChange={(v) => maj(l.id, { repartition: v })}
-            nbExercices={nbExercices}
+            exercices={resultats.exercices}
+            montantsAnnuels={l.montants}
           />
         </div>
     ),

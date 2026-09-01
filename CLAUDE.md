@@ -64,6 +64,24 @@ Toute nouvelle charge, tout nouveau produit doit donc :
 Un poste ajouté au compte de résultat sans contrepartie déséquilibre le bilan de
 son montant exact. Les tests le détectent immédiatement.
 
+Et une règle qui vaut pour les cinq sections : **en répartition `mensuel`, la grille prime
+sur le montant annuel, et l'annuel doit en DÉCOULER** — par
+`totauxAnnuelsDepuisRepartition()`, jamais par `ligne.montants` directement. Les charges et
+les recettes le faisaient ; les exceptionnels et les distributions non, et leurs deux
+moitiés divergeaient : le compte de résultat portait le montant saisi, la trésorerie celui
+de la grille, pour un écart de bilan du montant exact de la différence — 12 000 € mesurés,
+et quatre contrôles en échec. Toute nouvelle liste qui porte une `repartition` doit passer
+par ces deux lignes :
+
+```ts
+const montants = totauxAnnuelsDepuisRepartition(brut, ligne.repartition, exercices);
+const mensuel = repartirSurCalendrier(montants, ligne.repartition, exercices);
+```
+
+Corollaire côté interface : la grille de saisie mensuelle appelle `repartirSurExercice()`,
+la fonction DU MOTEUR, pour savoir quoi afficher. Recopier la règle était la cause d'une
+perte de chiffre — voir `web/src/ui/repartition.ts`.
+
 ### Le second point délicat : le chemin de la saisie
 
 `calculer()` tourne à **chaque frappe** dans l'interface. Trois invariants tiennent

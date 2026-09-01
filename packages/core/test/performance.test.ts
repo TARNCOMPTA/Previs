@@ -303,4 +303,97 @@ describe('une répartition mensuelle survit à l’allongement du prévisionnel'
       }
     }
   });
+
+  /*
+   * Les trois autres listes qui portent une répartition.
+   *
+   * Le chemin est le même, mais il ne suffit pas de le dire : les charges y passent par
+   * `totauxAnnuelsDepuisRepartition`, la section Autres non — son annuel vient directement
+   * de `ligne.montants` tandis que son mensuel vient de `repartirSurCalendrier`. Les deux
+   * moitiés divergeaient donc, et là où une charge s'évaporait en silence, un exceptionnel
+   * DÉSÉQUILIBRAIT le bilan : mesuré avant correction, 20 000,04 € puis 40 000,04 € d'écart
+   * et quatre contrôles en échec. Un chiffre d'affaires qui s'évapore est par ailleurs plus
+   * grave qu'une charge : c'est lui que le banquier regarde d'abord.
+   */
+  function avecLigneMensuelle(
+    nbExercices: number,
+    liste: 'recettes.lignes' | 'autres.exceptionnels' | 'autres.distributions',
+    montants: number[],
+    lignesMatrice: number,
+  ) {
+    const base = dossierComplet('IS');
+    const commun = {
+      id: 'cible',
+      libelle: 'Ligne éprouvée',
+      montants,
+      repartition: {
+        type: 'mensuel' as const,
+        montants: Array.from({ length: lignesMatrice }, () => Array.from({ length: 12 }, () => 1000)),
+      },
+    };
+    const ligne = completerLigne(liste, commun);
+    const parametres = { ...base.parametres, nbExercices };
+
+    if (liste === 'recettes.lignes') {
+      return ajusterSeries({
+        ...base,
+        parametres,
+        recettes: { ...base.recettes, lignes: [ligne] },
+      } as typeof base);
+    }
+    const cle = liste === 'autres.exceptionnels' ? 'exceptionnels' : 'distributions';
+    return ajusterSeries({
+      ...base,
+      parametres,
+      autres: { ...base.autres, [cle]: [ligne] },
+    } as typeof base);
+  }
+
+  it('un chiffre d’affaires ne s’évapore pas des exercices ajoutés', () => {
+    const d = avecLigneMensuelle(5, 'recettes.lignes', [240000, 250000, 255000, 260000, 260000], 3);
+    const r = calculer(d);
+    const detail = r.recettes.detail.find((l) => l.ligneId === 'cible')!;
+    expect(detail.montants[3], 'exercice 4').toBe(260000);
+    expect(detail.montants[4], 'exercice 5').toBe(260000);
+    // Et il arrive bien jusqu'au chiffre d'affaires du compte de résultat.
+    expect(r.compteResultat[3].chiffreAffaires).toBeGreaterThanOrEqual(260000);
+  });
+
+  it('un produit exceptionnel n’ouvre pas d’écart de bilan sur les exercices ajoutés', () => {
+    // La grille de trois lignes vaut 12 000 € par exercice ; le montant annuel saisi, lui,
+    // est nul sur les trois premiers. C'est cette divergence qui déséquilibrait le bilan,
+    // et elle est indépendante de l'allongement — d'où les trois premiers exercices ici.
+    const d = avecLigneMensuelle(5, 'autres.exceptionnels', [0, 0, 0, 20000, 20000], 3);
+    const r = calculer(d);
+
+    // Le témoin porte l'arrondi propre au dossier d'essai, quatre centimes : ce qu'on
+    // éprouve est que la ligne ajoutée n'y ajoute RIEN, non que l'écart soit nul.
+    const temoin = avecLigneMensuelle(5, 'autres.exceptionnels', [0, 0, 0, 0, 0], 0);
+    const ecartsTemoin = calculer(temoin).bilans.map((b) => Math.abs(b.ecart));
+
+    r.bilans.forEach((b, i) => {
+      expect(Math.abs(b.ecart), `exercice ${i + 1}`).toBeLessThanOrEqual(ecartsTemoin[i] + 0.01);
+    });
+
+    // Et le compte de résultat porte bien ce que la grille dit, non le montant annuel nul :
+    // douze mille de plus que le témoin, sur un premier exercice saisi à zéro.
+    const t = calculer(temoin);
+    expect(
+      r.compteResultat[0].produitsExceptionnels - t.compteResultat[0].produitsExceptionnels,
+    ).toBeCloseTo(12000, 2);
+  });
+
+  it('une distribution portée sur un exercice ajouté garde son montant et son équilibre', () => {
+    const d = avecLigneMensuelle(5, 'autres.distributions', [0, 12000, 12000, 15000, 15000], 3);
+    const r = calculer(d);
+    for (const b of r.bilans) {
+      expect(Math.abs(b.ecart), `exercice ${b.exercice + 1}`).toBeLessThanOrEqual(1);
+    }
+    // La distribution du cinquième exercice sort bien de la trésorerie.
+    const ex5 = r.exercices[4];
+    const flux = r.tresorerie.mensuelle
+      .slice(ex5.moisDebutAbsolu, ex5.moisDebutAbsolu + ex5.nbMois)
+      .reduce((t, m) => t + m.decaissements.distributions, 0);
+    expect(flux).toBeCloseTo(15000, 2);
+  });
 });

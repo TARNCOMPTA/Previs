@@ -1,6 +1,13 @@
-import { formaterMontant, LIBELLES_REPARTITION, type Repartition } from '@previs/core';
+import {
+  formaterMontant,
+  LIBELLES_REPARTITION,
+  repartirSurExercice,
+  type Exercice,
+  type Repartition,
+} from '@previs/core';
 import { useEffect, useState, type ReactNode } from 'react';
 import { ChampMontant, ChampNombre, Selecteur } from './champs.js';
+import { matriceApresSaisie } from './repartition.js';
 
 /** Indicateur mis en avant : une valeur, son libellé, et une tonalité. */
 export function CarteIndicateur({
@@ -199,15 +206,43 @@ export function Confirmation({
  * La saisonnalité se règle par douze poids relatifs, avec un aperçu en barres : c'est
  * ce qui permet de traduire une activité saisonnière sans saisir douze montants.
  */
+/**
+ * L'éditeur de répartition d'une ligne.
+ *
+ * En saisie mensuelle, il reçoit les exercices et les montants annuels de la ligne, et non
+ * un simple compte d'exercices. La raison n'est pas cosmétique : le moteur, devant une
+ * ligne de matrice ABSENTE, répartit le total annuel en parts égales sur les mois de
+ * l'exercice (`repartition.ts`). Une grille qui affichait douze zéros mentait donc sur le
+ * calcul, et — plus grave — saisir une seule cellule rendait la ligne « présente », les
+ * onze autres mois valant alors zéro pour de bon : un total de 13 000 € retombait à 500 €
+ * sous les yeux de qui voulait justement le vérifier. La grille montre maintenant les
+ * montants EN VIGUEUR, et toucher une cellule fixe la ligne entière à partir d'eux.
+ *
+ * Le nombre de mois vient de l'exercice, jamais de la constante douze : un premier exercice
+ * long en compte jusqu'à vingt-quatre, et ses mois au-delà du douzième étaient inatteignables.
+ */
 export function RepartitionMensuelle({
   valeur,
   onChange,
-  nbExercices,
+  exercices,
+  montantsAnnuels,
 }: {
   valeur: Repartition;
   onChange: (v: Repartition) => void;
-  nbExercices: number;
+  exercices: readonly Exercice[];
+  /** Total annuel de la ligne, un par exercice : ce que le moteur répartit à défaut de matrice. */
+  montantsAnnuels: readonly number[];
 }) {
+  const nbExercices = exercices.length;
+
+  /**
+   * Les montants que le moteur emploie réellement pour un exercice.
+   *
+   * C'est la fonction DU MOTEUR qui répond, et non une règle recopiée ici : recopier était
+   * la cause du défaut, la grille et le calcul ayant divergé sans que rien ne le signale.
+   */
+  const enVigueur = (exercice: Exercice, repartition: Repartition) =>
+    repartirSurExercice(montantsAnnuels[exercice.index] ?? 0, repartition, exercice);
   const types = Object.entries(LIBELLES_REPARTITION).map(([v, libelle]) => ({
     valeur: v as Repartition['type'],
     libelle,
@@ -224,9 +259,13 @@ export function RepartitionMensuelle({
       case 'saisonnalite':
         return onChange({ type: 'saisonnalite', poids: Array.from({ length: 12 }, () => 1) });
       case 'mensuel':
+        // Semé avec la répartition en vigueur, et non avec des zéros : choisir « saisie
+        // mensuelle détaillée » ramenait la ligne à zéro d'un seul clic. Ces montants ne sont
+        // pas inventés, c'est exactement ce que le moteur calculait juste avant — la courbe
+        // de saisonnalité comprise, si c'est d'elle qu'on vient.
         return onChange({
           type: 'mensuel',
-          montants: Array.from({ length: nbExercices }, () => Array.from({ length: 12 }, () => 0)),
+          montants: exercices.map((e) => enVigueur(e, valeur)),
         });
     }
   };
@@ -314,29 +353,50 @@ export function RepartitionMensuelle({
 
       {valeur.type === 'mensuel' ? (
         <div className="pile" style={{ gap: 8 }}>
-          {Array.from({ length: nbExercices }, (_, exercice) => (
-            <div key={exercice}>
-              <label className="libelle">Exercice {exercice + 1}</label>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 4 }}>
-                {Array.from({ length: 12 }, (_, mois) => (
-                  <ChampMontant
-                    key={mois}
-                    valeur={valeur.montants[exercice]?.[mois] ?? 0}
-                    onChange={(montant) => {
-                      const grille = valeur.montants.map((l) => [...(l ?? [])]);
-                      while (grille.length < nbExercices) grille.push([]);
-                      grille[exercice] = grille[exercice] ?? [];
-                      grille[exercice][mois] = montant;
-                      onChange({ type: 'mensuel', montants: grille });
-                    }}
-                    titre={`Mois ${mois + 1}`}
-                  />
-                ))}
+          {exercices.map((exercice) => {
+            const ligne = valeur.montants[exercice.index];
+            const deduit = !ligne || ligne.length === 0;
+            const montants = enVigueur(exercice, valeur);
+            return (
+              <div key={exercice.index}>
+                <label className="libelle">
+                  Exercice {exercice.index + 1}
+                  {deduit ? (
+                    <span className="discret">
+                      {' '}
+                      — déduit du total annuel, en parts égales
+                    </span>
+                  ) : null}
+                </label>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 4 }}>
+                  {montants.map((montant, mois) => (
+                    <ChampMontant
+                      key={mois}
+                      valeur={montant}
+                      onChange={(saisi) =>
+                        onChange({
+                          type: 'mensuel',
+                          montants: matriceApresSaisie(
+                            exercices,
+                            valeur,
+                            montantsAnnuels,
+                            exercice,
+                            mois,
+                            saisi,
+                          ),
+                        })
+                      }
+                      titre={`Mois ${mois + 1}`}
+                    />
+                  ))}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
           <div className="aide-champ">
             En saisie mensuelle détaillée, ces montants remplacent le total annuel de la ligne.
+            Un exercice sans saisie propre affiche la répartition que le moteur en fait&nbsp;;
+            toucher un mois fixe les autres à la valeur montrée.
           </div>
         </div>
       ) : null}

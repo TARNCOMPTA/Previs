@@ -689,7 +689,8 @@ function CorpsAutres({ dossier, resultats, annees, modifier, modifierLigne, ajou
                   <RepartitionMensuelle
                     valeur={x.repartition}
                     onChange={(v) => modifierLigne('autres.exceptionnels', x.id, { repartition: v })}
-                    nbExercices={nbExercices}
+                    exercices={resultats.exercices}
+                    montantsAnnuels={x.montants}
                   />
                 </div>
               )}
