@@ -57,6 +57,7 @@ Comptez cinq à dix minutes, l'essentiel étant la construction.
 | `--branche` | Branche à déployer. Par défaut, **celle qui est extraite** — un clone neuf prend donc la branche par défaut du dépôt. Viser `main` en dur faisait perdre sa mise à jour à une copie posée sur une branche de travail. |
 | `--racine` | Répertoire d'installation. Par défaut `/opt/previs`. |
 | `--port` | Port interne imposé. Par défaut, le premier libre à partir de 8080. |
+| `--sans-nginx` | N'installe que Previs, sur son port. À employer quand un autre frontal — conteneur, Caddy, Traefik — tient déjà 80 et 443 : l'installateur refuse sinon de toucher à nginx. Implique `--sans-tls`, donc aucun certbot ; `PUBLIC_URL` et `SECURE_COOKIES` d'une installation existante ne sont PAS modifiés. |
 | `--sans-tls` | Reste en HTTP, sans certificat. Pour un essai en réseau local. |
 | `--pare-feu` | Ouvre 80 et 443 dans ufw, **s'il est déjà actif**. Sans cette option, le pare-feu n'est pas touché. |
 | `--simulation` | Inventaire et plan seulement : aucune modification. |
@@ -103,6 +104,41 @@ sudo /etc/cron.daily/previs-sauvegarde  # essayer la sauvegarde à la main
 ```
 
 ---
+
+
+### Mettre à jour une installation existante
+
+Relancer l'installateur suffit — il est idempotent, sauvegarde la base avant de
+reconstruire, et ne régénère aucun secret. Une seule précaution, quand
+`deploy/installer.sh` a lui-même changé depuis la version déployée : **mettre le code à
+jour d'abord, puis lancer le script**.
+
+```bash
+cd /opt/previs
+sudo git fetch origin "$(git rev-parse --abbrev-ref HEAD)"
+sudo git reset --hard "origin/$(git rev-parse --abbrev-ref HEAD)"
+sudo ./deploy/installer.sh --domaine previs.tarncompta.fr --courriel contact@tarncompta.fr
+```
+
+La raison ne se devine pas. L'installateur fait `git reset --hard` sur le dépôt, donc
+sur lui-même, en cours d'exécution — et git réécrit le fichier **en place**, au même
+inode : mesuré, `stat -c %i` ne bouge pas. Bash lisant un script par décalage d'octets
+et y revenant après chaque commande, la suite n'est pas rechargée, elle est lue à
+l'ancien décalage dans le nouveau fichier. Les deux issues sont mauvaises, mesurées
+toutes les deux : un fichier plus **court** fait s'arrêter le script en silence avec un
+code de sortie **0** — sauvegarde de la base, construction et redémarrage sautés sans un
+mot — et un fichier plus **long** fait reprendre au milieu d'une ligne et exécuter un
+fragment comme une commande.
+
+Le script se relance désormais lui-même quand il détecte que son propre fichier a
+changé, ce qui referme le piège. Mais ce garde doit se trouver dans la version qui
+**tourne** : la première mise à jour depuis une version antérieure à son ajout reste à
+faire en deux temps.
+
+À noter enfin, sur une installation Ubuntu : la mise à jour vide `CHROMIUM_PATH`, ce qui
+est voulu. Un chemin figé désigne le Chrome complet ; laissé vide, Playwright choisit sa
+coquille sans écran, qui pèse 133 Mo au repos au lieu de 242 et supporte le
+cloisonnement du service.
 
 ## Derrière un frontal en conteneur (Caddy, Traefik, nginx-proxy)
 

@@ -18,6 +18,19 @@
 #
 set -euo pipefail
 
+# Le chemin absolu du script et ses arguments, gardés avant toute analyse : le script se
+# met à jour lui-même (voir « Code et construction ») et doit alors se relancer à
+# l'identique. Bash lit un script par DÉCALAGE D'OCTETS et y revient après chaque
+# commande ; remplacer le fichier en cours d'exécution ne recharge donc pas la suite, il
+# la lit à l'ancien décalage dans le nouveau fichier. Mesuré, les deux issues sont
+# mauvaises : un fichier plus COURT fait s'arrêter le script en silence avec un code de
+# sortie 0 — tout ce qui suit est sauté sans un mot —, un fichier plus LONG fait reprendre
+# au milieu d'une ligne et exécuter un fragment comme une commande. Sur un script lancé
+# par root, la seconde est inacceptable.
+SCRIPT_ABSOLU="$(readlink -f "$0")"
+ARGUMENTS_ORIGINE=("$@")
+EMPREINTE_SCRIPT="$(sha256sum "$SCRIPT_ABSOLU" | cut -d' ' -f1)"
+
 # ─── Paramètres ───────────────────────────────────────────────────────────────
 DOMAINE="${DOMAINE:-previs.tarncompta.fr}"
 COURRIEL="${COURRIEL:-}"
@@ -432,6 +445,17 @@ if [[ -d .git ]]; then
     git checkout --quiet "$BRANCHE" 2>/dev/null || git checkout --quiet -B "$BRANCHE" "origin/$BRANCHE"
     git reset --hard --quiet "origin/$BRANCHE"
     ok "Branche $BRANCHE à jour ($(git rev-parse --short HEAD))"
+
+    # Le « reset » vient peut-être de remplacer CE fichier. Voir l'en-tête : la suite ne
+    # serait pas relue, elle serait lue au décalage d'avant. On se relance donc, une seule
+    # fois — tout ce qui précède est en lecture seule ou idempotent, et le repasser ne
+    # coûte que du temps.
+    if [[ "${PREVIS_INSTALLATEUR_RELANCE:-}" != "1" ]] \
+       && [[ "$(sha256sum "$SCRIPT_ABSOLU" | cut -d' ' -f1)" != "$EMPREINTE_SCRIPT" ]]; then
+      avert "L'installateur s'est mis à jour lui-même : relance avec la nouvelle version."
+      export PREVIS_INSTALLATEUR_RELANCE=1
+      exec "$SCRIPT_ABSOLU" ${ARGUMENTS_ORIGINE[@]+"${ARGUMENTS_ORIGINE[@]}"}
+    fi
   fi
 fi
 
@@ -514,11 +538,25 @@ if [[ -z "$CHROMIUM" ]]; then
   NAVIGATEURS="$RACINE/chromium"
   if ! trouver_coquille_playwright >/dev/null; then
     avert "Aucun Chromium utilisable dans la distribution. Installation par playwright-core."
+    # Les dépendances de rendu passent par apt : c'est la partie lente, et elle ne sert
+    # qu'à une installation neuve.
     "$NODE" node_modules/playwright-core/cli.js install-deps chromium >/dev/null 2>&1 || \
       avert "L'installation des dépendances de rendu a signalé une erreur ; on poursuit."
-    PLAYWRIGHT_BROWSERS_PATH="$NAVIGATEURS" \
-      "$NODE" node_modules/playwright-core/cli.js install chromium >/dev/null
   fi
+  # « install » est lancé à CHAQUE passage, et non seulement quand rien n'est trouvé.
+  # Depuis Playwright 1.49, « launch » sans écran emploie « chromium_headless_shell », un
+  # binaire DISTINCT de « chromium » : une installation qui ne portait que le second
+  # satisfaisait pourtant le contrôle ci-dessus, qui accepte « chrome » en repli — et
+  # l'export échouait au démarrage du service. Vérifié ici : « executablePath() » annonce
+  # « chromium-1234/chrome-linux64/chrome » alors que « launch() » réclame
+  # « chromium_headless_shell-1234/chrome-headless-shell-linux64/chrome-headless-shell ».
+  # L'échec est toléré : sans accès au CDN de Playwright, une mise à jour par ailleurs
+  # valable ne doit pas s'arrêter là. Le contrôle qui suit, et le verdict que le service
+  # dépose sur sa propre sortie PDF, restent les juges.
+  PLAYWRIGHT_BROWSERS_PATH="$NAVIGATEURS" \
+    "$NODE" node_modules/playwright-core/cli.js install chromium >/dev/null 2>&1 \
+    || avert "L'installation des navigateurs de Playwright a signalé une erreur ; on poursuit
+     avec ce qui est présent. Si l'export PDF échoue, c'est la première piste."
   trouver_coquille_playwright >/dev/null \
     || mauvais "Les navigateurs de Playwright restent introuvables : le PDF ne pourrait pas être produit."
 fi
