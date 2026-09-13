@@ -45,7 +45,7 @@ import type {
   PlanFinancement,
   Resultats,
 } from './types.js';
-import { div, euro, pct, val, zeros } from './utils.js';
+import { div, euro, pct, repartirEgal, val, zeros } from './utils.js';
 
 /** Produits et charges exceptionnels, avec leur incidence sur la trésorerie. */
 function calculerExceptionnels(dossier: Dossier, exercices: ReturnType<typeof construireExercices>) {
@@ -334,8 +334,12 @@ export function calculer(dossierEntree: Dossier): Resultats {
     const engage = zeros(horizon);
     for (let i = 0; i < n; i++) {
       const e = exercices[i];
-      const part = euro(cotisationsExploitantParExercice[i] / e.nbMois);
-      for (let k = 0; k < e.nbMois; k++) engage[e.moisDebutAbsolu + k] += part;
+      // La charge du compte de résultat est le montant ANNUEL : ce qui est engagé au
+      // compte de tiers doit donc lui être égal au centime près, et une division arrondie
+      // répétée ne l'est pas. C'est ce reste qui creusait un écart de bilan croissant —
+      // mesuré, 0,04 € par exercice, jusqu'à 0,38 € sur dix ans en BIC à l'IR.
+      const parts = repartirEgal(cotisationsExploitantParExercice[i], e.nbMois);
+      for (let k = 0; k < e.nbMois; k++) engage[e.moisDebutAbsolu + k] += parts[k];
     }
     const periode = p.tns.periodicite === 'trimestrielle' ? 3 : 1;
     cotisationsExploitantPoste.engage = engage;
@@ -347,8 +351,11 @@ export function calculer(dossierEntree: Dossier): Resultats {
   if (!societe && p.ir.decaisse) {
     for (let i = 0; i < n; i++) {
       const e = exercices[i];
-      const part = euro(comptes[i].impotRevenuEstime / e.nbMois);
-      for (let k = 0; k < e.nbMois; k++) irMensuel[e.moisDebutAbsolu + k] += part;
+      // Même raison que pour les cotisations ci-dessus : le décaissé doit totaliser
+      // exactement l'impôt estimé, sans quoi le compte de l'exploitant et la trésorerie
+      // cessent de parler du même montant.
+      const parts = repartirEgal(comptes[i].impotRevenuEstime, e.nbMois);
+      for (let k = 0; k < e.nbMois; k++) irMensuel[e.moisDebutAbsolu + k] += parts[k];
     }
   }
 

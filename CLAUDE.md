@@ -64,6 +64,22 @@ Toute nouvelle charge, tout nouveau produit doit donc :
 Un poste ajouté au compte de résultat sans contrepartie déséquilibre le bilan de
 son montant exact. Les tests le détectent immédiatement.
 
+Et une règle de même famille, qui vaut pour **tout montant annuel étalé sur les mois** :
+passer par `repartirEgal()`, jamais par `euro(annuel / nbMois)` répété. Douze douzièmes
+arrondis ne redonnent pas le tout, et le reste tombe droit dans l'écart de bilan, puisque la
+charge du compte de résultat est le montant annuel tandis que le décaissé est la somme des
+parts. Trois étalements le faisaient — l'aide à l'embauche, les cotisations de l'exploitant,
+l'impôt sur le revenu décaissé — et creusaient un résidu **permanent** : 2 000 € d'aide
+décaissaient 2 000,04 €, et les cotisations de l'exploitant ajoutaient 0,04 € par exercice,
+jusqu'à 0,38 € sur dix ans en BIC à l'IR. `repartirEgal()` corrige la dernière part, et c'est
+exactement pour cela qu'elle existe.
+
+Ce résidu ne déclenchait **aucun** contrôle : `TOLERANCE` vaut un euro, et les essais
+d'équilibre historiques admettent le même euro. C'est ce qui l'a laissé vivre. Le bloc
+« l'équilibre du bilan est exact au centime » de `moteur.test.ts` exige désormais un écart
+**nul**, pour les trois régimes et de un à dix exercices ; c'est lui qui interdit qu'un
+étalement nouveau réintroduise la même erreur.
+
 Et une règle qui vaut pour les cinq sections : **en répartition `mensuel`, la grille prime
 sur le montant annuel, et l'annuel doit en DÉCOULER** — par
 `totauxAnnuelsDepuisRepartition()`, jamais par `ligne.montants` directement. Les charges et

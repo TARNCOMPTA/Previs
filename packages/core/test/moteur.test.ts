@@ -4,7 +4,7 @@ import { cotisationsExploitant, impotSocietes } from '../src/engine/fiscal.js';
 import { tableauAmortissement } from '../src/engine/emprunts.js';
 import { planAmortissement } from '../src/engine/immobilisations.js';
 import { construireExercices, moisAbsoluDansHorizon } from '../src/engine/periodes.js';
-import { dossierVide, normaliserDossier } from '../src/model/dossier.js';
+import { ajusterSeries, dossierVide, normaliserDossier } from '../src/model/dossier.js';
 import { modeleDossier } from '../src/modeles/index.js';
 import { dossier, dossierComplet } from './aide.js';
 
@@ -445,5 +445,92 @@ describe('bilan d’ouverture', () => {
     expect(r.coherent).toBe(false);
     // L'écart se propage au bilan : il n'est jamais absorbé par un compte d'attente.
     expect(Math.abs(r.bilans[0].ecart)).toBeGreaterThan(TOLERANCE);
+  });
+});
+
+/**
+ * L'équilibre du bilan est EXACT, et pas seulement sous la tolérance.
+ *
+ * Les autres essais d'équilibre admettent un euro — `TOLERANCE` —, ce qui laissait vivre
+ * un résidu de centimes que rien ne signalait : le contrôle ne s'allume qu'au-delà d'un
+ * euro, si bien qu'un écart de 0,38 € sur dix exercices passait inaperçu. Or un bilan
+ * faux de quelques centimes reste un bilan faux, et le résidu est le symptôme d'une
+ * divergence entre l'engagé et le décaissé.
+ *
+ * La cause en était toujours la même : un montant ANNUEL étalé sur les mois par
+ * `euro(annuel / nbMois)`, sans correction du reste. Douze douzièmes arrondis ne
+ * redonnent pas le tout — 2 000 € d'aide à l'embauche décaissaient 2 000,04 €, et les
+ * cotisations de l'exploitant creusaient 0,04 € par exercice. `repartirEgal()` corrige
+ * la dernière part, et c'est pour cela qu'elle existe.
+ */
+describe('l’équilibre du bilan est exact au centime', () => {
+  const HORIZONS = [1, 3, 5, 10] as const;
+
+  for (const regime of ['IS', 'BNC', 'BIC_IR'] as const) {
+    it(`${regime} : aucun résidu, de un à dix exercices`, () => {
+      const base = dossierComplet(regime);
+      for (const nbExercices of HORIZONS) {
+        const d = ajusterSeries({
+          ...base,
+          parametres: { ...base.parametres, nbExercices },
+        } as typeof base);
+        for (const b of calculer(d).bilans) {
+          expect(b.ecart, `${regime}, ${nbExercices} exercices, exercice ${b.exercice + 1}`).toBe(0);
+        }
+      }
+    });
+  }
+
+  it('et le résidu ne s’accumule pas avec l’horizon', () => {
+    // Le défaut d'origine croissait d'un exercice à l'autre : c'est cette forme-là qu'il
+    // faut interdire, car elle est invisible sur un dossier court.
+    const base = dossierComplet('BIC_IR');
+    const ecarts = HORIZONS.map((nbExercices) => {
+      const d = ajusterSeries({
+        ...base,
+        parametres: { ...base.parametres, nbExercices },
+      } as typeof base);
+      return Math.max(...calculer(d).bilans.map((b) => Math.abs(b.ecart)));
+    });
+    expect(ecarts, 'le pire écart doit rester nul quel que soit l’horizon').toEqual([0, 0, 0, 0]);
+  });
+
+  it('un impôt sur le revenu décaissé l’est pour son montant exact', () => {
+    // Le troisième étalement du même genre, que le dossier d'essai n'atteint pas : il porte
+    // « decaisse: false », et l'impôt ne sort alors jamais de la trésorerie. Activé, il
+    // révèle le même résidu — le compte de l'exploitant retranche l'impôt estimé, la
+    // trésorerie décaisse douze douzièmes arrondis.
+    const base = dossierComplet('BIC_IR');
+    const avecIr = {
+      ...base,
+      parametres: { ...base.parametres, ir: { ...base.parametres.ir, decaisse: true } },
+    };
+    for (const nbExercices of [3, 5]) {
+      const d = ajusterSeries({
+        ...avecIr,
+        parametres: { ...avecIr.parametres, nbExercices },
+      } as typeof base);
+      for (const b of calculer(d).bilans) {
+        expect(b.ecart, `${nbExercices} exercices, exercice ${b.exercice + 1}`).toBe(0);
+      }
+    }
+  });
+
+  it('une aide à l’embauche est décaissée pour son montant exact', () => {
+    // Le cas isolé : 2 000 € sur douze mois. `euro(2000 / 12)` vaut 166,67, et douze fois
+    // 166,67 font 2 000,04. Le contrôle porte sur le bilan, seul endroit où l'écart se voit.
+    const base = dossierComplet('IS');
+    const avecAide = {
+      ...base,
+      charges: {
+        ...base.charges,
+        personnel: base.charges.personnel.map((l) =>
+          l.statut === 'salarie' ? { ...l, aides: [2000, 0, 0] } : l,
+        ),
+      },
+    };
+    for (const b of calculer(ajusterSeries(avecAide as typeof base)).bilans) {
+      expect(b.ecart, `exercice ${b.exercice + 1}`).toBe(0);
+    }
   });
 });

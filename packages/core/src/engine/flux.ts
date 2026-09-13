@@ -4,7 +4,7 @@ import { estMarchandise, type LigneRecette } from '../model/recettes.js';
 import { moisAbsoluDansHorizon, nbMoisTotal } from './periodes.js';
 import { decalerSerie, repartirSurCalendrier, totauxAnnuelsDepuisRepartition } from './repartition.js';
 import type { DetailCharge, DetailPersonnel, DetailRecette, Exercice } from './types.js';
-import { euro, pct, val, zeros } from './utils.js';
+import { euro, pct, repartirEgal, val, zeros } from './utils.js';
 
 /**
  * Un poste de tiers : ce qui a été engagé et ce qui a été réglé, mois par mois.
@@ -481,10 +481,13 @@ export function calculerPersonnel(dossier: Dossier, exercices: readonly Exercice
         const aide = val(ligne.aides, i);
         if (aide === 0) continue;
         const e = exercices[i];
-        const part = euro(aide / e.nbMois);
+        // `repartirEgal` et non une division arrondie : `euro(aide / nbMois)` répété douze
+        // fois ne redonne pas l'aide. Mesuré, 2 000 € étalés sur douze mois décaissaient
+        // 2 000,04 €, et les quatre centimes ouvraient un écart de bilan permanent.
+        const parts = repartirEgal(aide, e.nbMois);
         for (let k = 0; k < e.nbMois; k++) {
           const m = e.moisDebutAbsolu + k;
-          if (m < horizon) chargesMensuel[m] = euro(chargesMensuel[m] - part);
+          if (m < horizon) chargesMensuel[m] = euro(chargesMensuel[m] - parts[k]);
         }
       }
 
