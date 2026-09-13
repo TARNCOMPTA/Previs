@@ -57,7 +57,7 @@ Comptez cinq à dix minutes, l'essentiel étant la construction.
 | `--branche` | Branche à déployer. Par défaut, **celle qui est extraite** — un clone neuf prend donc la branche par défaut du dépôt. Viser `main` en dur faisait perdre sa mise à jour à une copie posée sur une branche de travail. |
 | `--racine` | Répertoire d'installation. Par défaut `/opt/previs`. |
 | `--port` | Port interne imposé. Par défaut, le premier libre à partir de 8080. |
-| `--sans-nginx` | N'installe que Previs, sur son port. À employer quand un autre frontal — conteneur, Caddy, Traefik — tient déjà 80 et 443 : l'installateur refuse sinon de toucher à nginx. Implique `--sans-tls`, donc aucun certbot ; `PUBLIC_URL` et `SECURE_COOKIES` d'une installation existante ne sont PAS modifiés. |
+| `--sans-nginx` | N'installe que Previs, sur son port. À employer quand un autre frontal — conteneur, Caddy, Traefik — tient déjà 80 et 443 : l'installateur refuse sinon de toucher à nginx. Implique `--sans-tls`, donc aucun certbot ; `PUBLIC_URL` et `SECURE_COOKIES` d'une installation existante ne sont PAS modifiés. En fin de course, le script interroge le domaine : s'il répond déjà et sert bien Previs, il le dit en une ligne au lieu de réclamer un renvoi déjà en place, et signale au passage un `PUBLIC_URL` qui annoncerait un autre schéma que celui qui répond — le contrôle d'origine refuserait alors les écritures. |
 | `--sans-tls` | Reste en HTTP, sans certificat. Pour un essai en réseau local. |
 | `--pare-feu` | Ouvre 80 et 443 dans ufw, **s'il est déjà actif**. Sans cette option, le pare-feu n'est pas touché. |
 | `--simulation` | Inventaire et plan seulement : aucune modification. |

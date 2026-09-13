@@ -1008,18 +1008,46 @@ if [[ $NOUVELLE_INSTALLATION -eq 1 ]]; then
 fi
 
 if [[ $SANS_NGINX -eq 1 ]]; then
-  printf '\n\033[1;33m  ── Reste à faire : le renvoi depuis votre serveur frontal ──\033[0m\n'
-  printf '  Previs écoute sur \033[1m127.0.0.1:%s\033[0m et n’est joignable que localement.\n' "$PORT_INTERNE"
-  printf '  Renvoyer %s vers ce port, en transmettant Host et X-Forwarded-Proto.\n\n' "$DOMAINE"
-  printf '  Un modèle nginx complet — export PDF, point MCP, mise en cache — est fourni :\n'
-  printf '    %s/deploy/nginx.previs.conf\n\n' "$RACINE"
-  printf '  Trois réglages comptent, quel que soit le frontal :\n'
-  printf '   • transmettre l’en-tête Host tel que reçu ; le contrôle d’origine s’appuie dessus\n'
-  printf '   • X-Forwarded-Proto https, sinon les cookies sécurisés ne seront pas posés\n'
-  printf '   • laisser 180 s à /api/dossiers/…/pdf : Chromium met une dizaine de secondes au\n'
-  printf '     premier appel après un redémarrage\n\n'
-  printf '  Puis, si le frontal termine le TLS, ajuster PUBLIC_URL dans %s/.env\n' "$RACINE"
-  printf '  et redémarrer :  sudo systemctl restart previs\n\n'
+  # Le renvoi est peut-être DÉJÀ en place : c'est le cas courant d'une mise à jour sur un
+  # serveur qui héberge d'autres sites, où « --sans-nginx » ne fait que dire à l'installateur
+  # de ne pas y toucher. Réclamer à chaque fois un travail déjà fait use l'attention : un
+  # pavé qu'on apprend à sauter finit par masquer le jour où il dit vrai. On vérifie donc.
+  FRONTAL_EN_PLACE=0
+  SCHEMA_PUBLIC=""
+  for schema in https http; do
+    if curl -fsS --max-time 8 "$schema://$DOMAINE/api/sante" 2>/dev/null | grep -q '"service":"previs"'; then
+      FRONTAL_EN_PLACE=1
+      SCHEMA_PUBLIC="$schema"
+      break
+    fi
+  done
+
+  if [[ $FRONTAL_EN_PLACE -eq 1 ]]; then
+    printf '\n  Frontal déjà en place : \033[1m%s://%s\033[0m répond et sert bien Previs.\n' \
+      "$SCHEMA_PUBLIC" "$DOMAINE"
+    # Le contrôle d'origine et l'attribut « Secure » du cookie s'appuient sur PUBLIC_URL :
+    # s'il annonce un autre schéma que celui qui répond, les écritures seront refusées.
+    PUBLIC_DECLAREE="$(sed -n 's/^PUBLIC_URL=//p' "$RACINE/.env" | head -1)"
+    if [[ "$PUBLIC_DECLAREE" != "$SCHEMA_PUBLIC://$DOMAINE" ]]; then
+      avert "PUBLIC_URL vaut « $PUBLIC_DECLAREE » alors que « $SCHEMA_PUBLIC://$DOMAINE » répond.
+     Le contrôle d'origine refusera les écritures. Corriger dans $RACINE/.env,
+     puis : sudo systemctl restart previs"
+    fi
+    printf '\n'
+  else
+    printf '\n\033[1;33m  ── Reste à faire : le renvoi depuis votre serveur frontal ──\033[0m\n'
+    printf '  Previs écoute sur \033[1m127.0.0.1:%s\033[0m et n’est joignable que localement.\n' "$PORT_INTERNE"
+    printf '  Renvoyer %s vers ce port, en transmettant Host et X-Forwarded-Proto.\n\n' "$DOMAINE"
+    printf '  Un modèle nginx complet — export PDF, point MCP, mise en cache — est fourni :\n'
+    printf '    %s/deploy/nginx.previs.conf\n\n' "$RACINE"
+    printf '  Trois réglages comptent, quel que soit le frontal :\n'
+    printf '   • transmettre l’en-tête Host tel que reçu ; le contrôle d’origine s’appuie dessus\n'
+    printf '   • X-Forwarded-Proto https, sinon les cookies sécurisés ne seront pas posés\n'
+    printf '   • laisser 180 s à /api/dossiers/…/pdf : Chromium met une dizaine de secondes au\n'
+    printf '     premier appel après un redémarrage\n\n'
+    printf '  Puis, si le frontal termine le TLS, ajuster PUBLIC_URL dans %s/.env\n' "$RACINE"
+    printf '  et redémarrer :  sudo systemctl restart previs\n\n'
+  fi
 else
   printf '\n  Prochaine étape : ouvrir %s, se connecter, puis renseigner\n' "$BASE_PUBLIQUE"
   printf '  Administration → Identité du cabinet (logo, SIRET, inscription à l’Ordre).\n\n'
